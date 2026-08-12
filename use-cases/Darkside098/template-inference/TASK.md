@@ -416,7 +416,7 @@ Architecture:
 Locked
 
 Next implementation stage:
-Project structure and document ingestion
+Document profiling
 
 ---
 
@@ -743,4 +743,140 @@ Milestone 1 is complete only when:
 - no benchmark-specific answers are hard-coded
 - `.env` remains ignored
 - `.venv` remains ignored
+- the benchmark corpus remains unchanged
+
+---
+
+## 18. Implementation Scope — Milestone 2
+
+The second implementation milestone focuses exclusively on document profiling.
+
+### 18.1 Milestone 2 Goals
+
+Implement only:
+
+1. Document profile model
+2. Document profiling abstraction
+3. Structural profiling
+4. Content profiling
+5. Formatting signals
+6. Generic section-boundary detection
+7. Profile serialization
+8. Unit tests for document profiling
+9. Integration tests using normalized benchmark documents
+
+### 18.2 Document Profile
+
+Create a structured `DocumentProfile` representation containing useful observable evidence from a normalized document.
+
+The profile should support, where available:
+
+- document ID
+- filename
+- file type
+- text blocks
+- paragraph information
+- heading information
+- table information
+- list information
+- section boundaries
+- formatting signals
+- structural statistics
+- content signals
+
+The profile must be independent of the benchmark document families.
+
+### 18.3 Structural Profiling
+
+The profiler should calculate observable structural characteristics including, where applicable:
+
+- total block count
+- paragraph count
+- heading count
+- heading levels
+- table count
+- table dimensions
+- list count
+- block type sequence
+- section boundaries
+- document length statistics
+
+Structural profiling must preserve the distinction between observation and inference.
+
+### 18.4 Content Profiling
+
+The profiler should extract useful content signals including:
+
+- normalized text
+- meaningful vocabulary
+- repeated terms
+- heading text
+- basic text statistics
+
+Content signals are observational evidence only.
+
+The profiler must not classify documents into document families.
+
+### 18.5 Formatting Signals
+
+The profiler should capture useful formatting information available from the normalized document representation, including where applicable:
+
+- paragraph styles
+- heading styles
+- basic text formatting
+- table-related formatting
+
+Formatting signals should remain generic and reusable by downstream components.
+
+### 18.6 Section Boundaries
+
+The profiler should identify reasonable section boundaries using observable document structure such as headings and heading transitions.
+
+Section detection must be generic.
+
+It must not depend on known benchmark section names such as "Compensation", "Remote Work Setup", or "Leadership Orientation".
+
+### 18.7 Profile Output
+
+Every successfully normalized document should be capable of producing one structured `DocumentProfile`.
+
+The profile should be machine-readable and serializable.
+
+The profile must contain enough evidence for later family compatibility and template inference stages.
+
+### 18.8 Explicitly Out of Scope for Milestone 2
+
+Do NOT implement:
+
+- document family detection
+- family compatibility scoring
+- family clustering
+- template inference
+- variable detection
+- conditional-section inference
+- ground-truth evaluation
+- LLM calls
+- embedding generation
+- vector databases
+- API endpoints
+- frontend/UI
+- PDF loader
+
+These belong to later milestones.
+
+### 18.9 Milestone 2 Completion Criteria
+
+Milestone 2 is complete only when:
+
+- every normalized document can be profiled
+- structural statistics are produced
+- content signals are produced
+- formatting signals are captured where available
+- generic section boundaries are detected
+- profile output is structured and serializable
+- profiling does not rely on filenames
+- profiling does not read ground-truth files
+- profiling contains no benchmark-specific family rules
+- existing Milestone 1 tests continue to pass
+- new profiling tests pass
 - the benchmark corpus remains unchanged
