@@ -880,3 +880,361 @@ Milestone 2 is complete only when:
 - existing Milestone 1 tests continue to pass
 - new profiling tests pass
 - the benchmark corpus remains unchanged
+
+
+---
+
+## 19. Implementation Scope — Milestone 3
+
+The third implementation milestone focuses exclusively on family compatibility scoring.
+
+Milestone 3 must compare normalized document profiles and determine how structurally and content-wise compatible two documents are.
+
+The output of this milestone will provide reusable compatibility evidence for the later family-clustering stage.
+
+### 19.1 Milestone 3 Goals
+
+Implement only:
+
+1. Family compatibility data model
+2. Compatibility scoring abstraction
+3. Structural compatibility signals
+4. Content compatibility signals
+5. Section compatibility signals
+6. Heading compatibility signals
+7. Table compatibility signals
+8. Document-length compatibility
+9. Meaningful-vocabulary compatibility
+10. Combined compatibility score
+11. Compatibility evidence and confidence
+12. Unit tests
+13. Integration tests using real benchmark document profiles
+
+The implementation must consume `DocumentProfile` objects produced by Milestone 2.
+
+---
+
+### 19.2 Compatibility Model
+
+Create a structured machine-readable compatibility result.
+
+Conceptual structure:
+
+```json
+{
+  "document_a_id": "string",
+  "document_b_id": "string",
+  "compatible": true,
+  "score": 0.0,
+  "confidence": 0.0,
+  "signals": {},
+  "evidence": []
+}
+
+
+19.3 Compatibility Signals
+
+Compatibility must be based on observable evidence from DocumentProfile.
+
+The implementation should consider multiple independent signals.
+
+Structural Signals
+
+Compare characteristics such as:
+
+total block count
+paragraph count
+heading count
+heading-level distribution
+table count
+table dimensions
+block-type sequence
+document-length statistics
+section count
+section-size patterns
+
+Structural similarity must not require exact equality.
+
+Small differences between documents should not automatically make them incompatible.
+
+19.4 Section Compatibility
+
+Compare the section structures represented in the document profiles.
+
+Possible evidence includes:
+
+number of sections
+relative section ordering
+heading-level patterns
+section size distribution
+presence or absence of corresponding structural positions
+
+Section compatibility must be based on structural evidence.
+
+The implementation must not hard-code benchmark section names.
+
+For example, it must not contain special rules such as:
+
+"Compensation" → Offer Letter
+"Remote Work Setup" → Onboarding Letter
+"Leadership Orientation" → Onboarding Letter
+
+Section names may be used as observed content signals where appropriate, but they must not be treated as predetermined family labels.
+
+19.5 Heading Compatibility
+
+Compare heading-related evidence including:
+
+heading count
+heading-level distribution
+normalized heading vocabulary
+heading ordering patterns
+
+Heading similarity should contribute to the overall compatibility score but must not be the only signal.
+
+19.6 Content Compatibility
+
+Compare observable content signals from ContentProfile.
+
+Possible evidence includes:
+
+meaningful vocabulary overlap
+repeated-term overlap
+vocabulary frequency similarity
+heading vocabulary overlap
+basic text statistics
+
+Content comparison should use normalized vocabulary rather than raw document strings where possible.
+
+The implementation must not use ground-truth information or externally supplied semantic labels.
+
+19.7 Table Compatibility
+
+Compare table-related evidence including:
+
+presence or absence of tables
+number of tables
+table dimensions
+repeated table structure
+
+Table compatibility is one signal among several.
+
+Documents must not be considered incompatible solely because one document contains a small structural variation in tables.
+
+19.8 Document-Length Compatibility
+
+Compare document-length statistics from the profiles.
+
+The comparison should tolerate reasonable variation.
+
+Document length must never be used as the sole family-detection signal.
+
+19.9 Combined Compatibility Score
+
+Produce a normalized overall compatibility score:
+
+0.0 <= score <= 1.0
+
+The score should combine multiple observable signals rather than relying on a single feature.
+
+The implementation must:
+
+use deterministic scoring
+produce the same result for the same pair of profiles
+keep the scoring logic explainable
+avoid hidden external dependencies
+avoid LLM-based judgments
+
+The exact weighting strategy should be documented in the implementation.
+
+A compatibility threshold may be defined for converting the continuous score into:
+
+compatible = true
+
+or:
+
+compatible = false
+
+The threshold must be explicit and configurable rather than hidden inside unrelated logic.
+
+19.10 Evidence
+
+Every compatibility result should provide evidence explaining the score.
+
+Evidence may include observations such as:
+
+{
+  "type": "section_similarity",
+  "value": 0.86
+}
+
+or:
+
+{
+  "type": "vocabulary_overlap",
+  "value": 0.72
+}
+
+or:
+
+{
+  "type": "block_structure_similarity",
+  "value": 0.91
+}
+
+Evidence must be derived from the two DocumentProfile objects.
+
+Evidence must not reference:
+
+ground-truth JSON
+expected family labels
+hard-coded benchmark answers
+19.11 Confidence
+
+Confidence values must be normalized between:
+
+0.0 and 1.0
+
+Confidence represents how reliable the compatibility comparison is based on the available profile evidence.
+
+Confidence must not simply duplicate the compatibility score.
+
+The implementation should account for cases where insufficient evidence is available.
+
+19.12 Compatibility Abstraction
+
+Create a reusable compatibility component that accepts two document profiles.
+
+Conceptual interface:
+
+class CompatibilityScorer:
+
+    def compare(
+        self,
+        profile_a: DocumentProfile,
+        profile_b: DocumentProfile
+    ) -> CompatibilityResult:
+        ...
+
+The scorer must operate entirely on DocumentProfile objects.
+
+It must not:
+
+load documents directly
+read DOCX/PDF files
+access ground-truth files
+access benchmark metadata
+perform document clustering
+perform template inference
+19.13 Determinism and Symmetry
+
+Compatibility scoring must be deterministic.
+
+For the same pair of profiles:
+
+compare(A, B)
+
+must produce the same result across repeated executions.
+
+Compatibility should also be symmetric:
+
+compare(A, B)
+
+and:
+
+compare(B, A)
+
+should produce equivalent compatibility scores and evidence, apart from the ordering of document identifiers where applicable.
+
+19.14 Testing
+
+Create focused unit tests covering:
+
+compatibility model creation
+score normalization
+threshold behavior
+structural similarity
+section similarity
+heading similarity
+vocabulary similarity
+table similarity
+document-length similarity
+combined scoring
+evidence generation
+confidence calculation
+deterministic repeated comparisons
+symmetric comparisons
+edge cases with missing/empty profile signals
+
+Tests should use small synthetic DocumentProfile objects where practical.
+
+Do not depend on the entire benchmark corpus for every unit test.
+
+19.15 Integration Tests
+
+Create integration-style tests that:
+
+Load real benchmark DOCX documents through the existing DOCX loader.
+Generate DocumentProfile objects using the Milestone 2 profiler.
+Compare multiple real document pairs using the compatibility scorer.
+Verify that compatibility results are structured and serializable.
+Verify that repeated comparisons are deterministic.
+Verify that comparison is symmetric.
+Verify that the scorer does not read ground-truth files.
+Verify that benchmark corpus files remain unchanged.
+
+Integration tests may include documents from both benchmark families.
+
+Tests must not hard-code the expected family labels as part of the compatibility implementation.
+
+19.16 Explicitly Out of Scope for Milestone 3
+
+Do NOT implement:
+
+document family clustering
+family assignment
+family naming
+template inference
+variable detection
+conditional-section inference
+ground-truth evaluation
+LLM calls
+embedding generation
+vector databases
+API endpoints
+frontend/UI
+PDF loader
+modification of the benchmark corpus
+
+Milestone 3 ends at producing a reusable pairwise compatibility result.
+
+Family clustering belongs to the next milestone.
+
+19.17 Milestone 3 Completion Criteria
+
+Milestone 3 is complete only when:
+
+- [ ] Two DocumentProfile objects can be compared
+- [ ] Compatibility produces a structured result
+- [ ] Compatibility score is normalized between 0.0 and 1.0
+- [ ] Compatibility uses multiple observable signals
+- [ ] Structural compatibility is considered
+- [ ] Section compatibility is considered
+- [ ] Heading compatibility is considered
+- [ ] Content/vocabulary compatibility is considered
+- [ ] Table compatibility is considered where available
+- [ ] Document-length compatibility is considered
+- [ ] Evidence is included in the result
+- [ ] Confidence is included in the result
+- [ ] Scoring is deterministic
+- [ ] Comparison is symmetric
+- [ ] No filename-only family logic is used
+- [ ] No ground-truth files are read
+- [ ] No benchmark-specific family rules are hard-coded
+- [ ] No clustering is implemented
+- [ ] Existing Milestone 1 tests continue to pass
+- [ ] Existing Milestone 2 tests continue to pass
+- [ ] New Milestone 3 tests pass
+- [ ] Benchmark corpus remains unchanged
+- [ ] `.env` remains ignored
+- [ ] `.venv` remains ignored
