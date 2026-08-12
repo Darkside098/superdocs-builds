@@ -417,3 +417,330 @@ Locked
 
 Next implementation stage:
 Project structure and document ingestion
+
+---
+
+## 16. Inference Output Contract
+
+The inference engine must return a structured, machine-readable result.
+
+The result must represent four major areas:
+
+1. detected document families
+2. inferred template structure
+3. inferred variable fields
+4. inferred conditional sections and rules
+
+The output must also contain confidence/evidence where appropriate.
+
+### 16.1 Top-Level Result
+
+Conceptual structure:
+
+```json
+{
+  "run_id": "string",
+  "documents": [],
+  "families": [],
+  "inference": [],
+  "metadata": {}
+}
+```
+
+### 16.2 Document Information
+
+Each processed document should have:
+
+```json
+{
+  "document_id": "string",
+  "filename": "string",
+  "file_type": "docx|pdf",
+  "profile_id": "string"
+}
+
+### 16.3 Document Family
+
+Each detected family should contain:
+
+{
+  "family_id": "string",
+  "family_name": "string|null",
+  "document_ids": [],
+  "confidence": 0.0,
+  "evidence": []
+}
+
+family_name may initially be null when the system cannot confidently assign a semantic family name.
+
+The system must not assume that filenames determine family membership.
+
+### 16.4 Inferred Template
+
+Each detected family should produce an inferred template:
+
+{
+  "family_id": "string",
+  "template": {
+    "sections": [],
+    "variables": [],
+    "conditional_sections": []
+  }
+}
+### 16.5 Section
+
+Each inferred section should contain:
+
+{
+  "section_id": "string",
+  "name": "string",
+  "type": "fixed|variable|conditional",
+  "order": 0,
+  "confidence": 0.0,
+  "evidence": []
+}
+
+order represents the inferred relative section position.
+
+### 16.6 Variable Field
+
+Each inferred variable should contain:
+
+{
+  "name": "string",
+  "semantic_type": "string",
+  "confidence": 0.0,
+  "evidence": [],
+  "observed_values": []
+}
+
+Examples of possible semantic types:
+
+person_name
+person_id
+job_title
+department
+date
+time
+location
+salary
+email
+phone
+manager_name
+organization_name
+
+The system may introduce additional semantic types when justified by document evidence.
+
+Variable names must be semantic and reusable rather than based only on literal values.
+
+### 16.7 Conditional Section
+
+Each conditional section should contain:
+
+{
+  "section_name": "string",
+  "condition": {
+    "field": "string",
+    "operator": "equals|not_equals|in|not_in|contains|exists",
+    "value": "string|number|boolean|array|null"
+  },
+  "confidence": 0.0,
+  "evidence": []
+}
+
+The system may support compound conditions later if the evidence requires them.
+
+### 16.8 Evidence
+
+Evidence should explain why an inference was made.
+
+Examples:
+
+{
+  "type": "repeated_structure",
+  "document_ids": ["doc_001", "doc_002"]
+}
+
+or:
+
+{
+  "type": "conditional_correlation",
+  "section": "Remote Work Setup",
+  "observed_with": {
+    "field": "work_mode",
+    "value": "Remote"
+  }
+}
+
+Evidence must be derived from the processed documents and must not use ground-truth files.
+
+### 16.9 Confidence
+
+Confidence values must be normalized between:
+
+0.0 and 1.0
+
+Confidence must represent the system's confidence in the inference, not simply the presence of a value.
+
+### 16.10 Ground Truth Isolation
+
+The inference result must never depend directly on:
+
+offer_ground_truth.json
+onboarding_ground_truth.json
+
+These files are evaluation-only.
+
+The inference pipeline must operate correctly when those files are completely absent.
+
+### 16.11 Explainability Requirement
+
+The final result should make it possible to understand:
+
+why documents were grouped together
+why a section was considered fixed
+why a value was considered variable
+why a section was considered conditional
+why a particular conditional rule was inferred
+
+This evidence should be generated from document observations.
+
+---
+
+## 17. Initial Implementation Scope — Milestone 1
+
+The first implementation milestone establishes the application foundation and document ingestion layer.
+
+### Milestone 1 Goals
+
+Implement only:
+
+1. Modular Python application package structure
+2. Configuration management
+3. Normalized document representation
+4. Document ingestion abstraction
+5. DOCX document loader
+6. Basic document structural extraction
+7. Unit tests for the ingestion layer
+
+### 17.1 Application Structure
+
+Create a clean modular structure that separates:
+
+- configuration
+- document ingestion
+- document models/schemas
+- future profiling
+- tests
+
+Do not place all functionality in a single Python file.
+
+### 17.2 Configuration
+
+Configuration must support environment variables.
+
+Secrets must never be hard-coded.
+
+The existing `.env` file must not be committed.
+
+The implementation should use the project's existing environment configuration approach where appropriate.
+
+### 17.3 Normalized Document Representation
+
+Create an internal representation that can later support both DOCX and PDF documents.
+
+At minimum, the representation should be capable of storing:
+
+- document ID
+- filename
+- file type
+- paragraphs
+- headings when detectable
+- tables
+- lists when detectable
+- basic structural metadata
+
+The representation must be independent of the source file format.
+
+### 17.4 Document Ingestion Abstraction
+
+Create an abstraction/interface for document loaders.
+
+The architecture should allow:
+
+```text
+Document
+   |
+   +-- DOCX Loader
+   |
+   +-- PDF Loader (future milestone)
+
+### 17.5 DOCX Loader
+
+For Milestone 1, implement only the DOCX loader.
+
+Do not implement the PDF loader yet.
+
+The DOCX loader should:
+
+- accept a DOCX file
+- extract useful document content
+- preserve paragraph order
+- identify headings when reasonably detectable
+- extract tables
+- preserve useful list information when detectable
+- return the normalized document representation
+
+The loader must not perform template inference.
+
+### 17.6 Tests
+
+Create focused unit tests covering:
+
+- successful DOCX loading
+- normalized document creation
+- paragraph extraction
+- table extraction
+- basic heading/structure detection
+- invalid or missing file handling
+
+Tests should use small fixtures where practical rather than depending on the entire benchmark corpus for every unit test.
+
+At least one integration-style test should load one real benchmark DOCX and verify that the normalized representation contains expected structural information.
+
+### 17.7 Explicitly Out of Scope for Milestone 1
+
+Do NOT implement:
+
+- document family detection
+- family compatibility scoring
+- clustering
+- template inference
+- variable detection
+- conditional-section inference
+- LLM calls
+- embedding generation
+- vector databases
+- evaluation against ground truth
+- API endpoints
+- frontend/UI
+
+These belong to later milestones.
+
+### 17.8 Milestone 1 Completion Criteria
+
+Milestone 1 is complete only when:
+
+- the application structure is modular
+- configuration loads successfully
+- a DOCX can be loaded through the ingestion abstraction
+- the normalized document representation is produced successfully
+- paragraphs and tables are extracted
+- basic headings/structure are detected where reasonably possible
+- useful list information is preserved where detectable
+- tests pass
+- no ground-truth file is used by ingestion
+- no benchmark-specific answers are hard-coded
+- `.env` remains ignored
+- `.venv` remains ignored
+- the benchmark corpus remains unchanged
