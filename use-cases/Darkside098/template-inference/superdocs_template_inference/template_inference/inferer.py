@@ -24,6 +24,10 @@ from superdocs_template_inference.template_inference.variables import (
     calculate_variable_frequency,
     detect_variables,
     infer_semantic_role,
+    extract_variable_values,
+    infer_variable_type,
+    infer_variable_metadata,
+    link_variable_to_sections,
 )
 
 
@@ -130,6 +134,9 @@ class TemplateInferer:
         # 4. Detect variables
         candidate_variables = detect_variables(family_profiles)
 
+        # M6: Extract actual values for each variable candidate
+        variable_values = extract_variable_values(candidate_variables, family_profiles)
+
         inferred_variables = []
 
         for var_name, var_info in candidate_variables.items():
@@ -143,22 +150,64 @@ class TemplateInferer:
             # Infer semantic role
             semantic_role = infer_semantic_role(var_name, [])
 
+            # M6: Extract observed values
+            observed_values = variable_values.get(var_name, [])
+
+            # M6: Infer variable type
+            inferred_type, type_metadata = infer_variable_type(observed_values)
+
+            # M6: Infer variable metadata
+            var_metadata = infer_variable_metadata(var_name, observed_values, family_profiles)
+
+            # M6: Link variable to sections
+            section_links = link_variable_to_sections(var_name, family_profiles, section_groups)
+            section_context = section_links[0] if section_links else "unknown"
+
+            # Build evidence list
+            evidence_list = [
+                InferenceEvidence(
+                    evidence_type="value_variance",
+                    source_document_ids=family_cluster.document_ids,
+                    related_variable=var_name,
+                    observation=f"Variable appears in {frequency:.1%} of documents",
+                    confidence_contribution=frequency,
+                )
+            ]
+
+            # Add type inference evidence
+            if inferred_type != "string":
+                evidence_list.append(
+                    InferenceEvidence(
+                        evidence_type="semantic_pattern_match",
+                        source_document_ids=[
+                            family_profiles[i].document_id
+                            for i in range(len(family_profiles))
+                            if var_name.lower() in family_profiles[i].content.vocabulary
+                        ],
+                        related_variable=var_name,
+                        observation=f"Variable values match {inferred_type} pattern",
+                        confidence_contribution=0.3,
+                    )
+                )
+
+            # Confidence calculation
+            base_confidence = 0.6 if semantic_role != "unknown" else 0.4
+            type_boost = 0.2 if inferred_type != "string" else 0.0
+            confidence = min(1.0, base_confidence + type_boost)
+
             variable = VariableField(
                 variable_name=var_name,
                 semantic_role=semantic_role,
-                section_context="unknown",
-                observed_values=var_info.get("values", []),
+                section_context=section_context,
+                observed_values=observed_values,
                 frequency=frequency,
-                confidence=0.6 if semantic_role != "unknown" else 0.4,
-                evidence=[
-                    InferenceEvidence(
-                        evidence_type="value_variance",
-                        source_document_ids=family_cluster.document_ids,
-                        related_variable=var_name,
-                        observation=f"Variable appears in {frequency:.1%} of documents",
-                        confidence_contribution=frequency,
-                    )
-                ],
+                confidence=confidence,
+                evidence=evidence_list,
+                # M6 fields
+                inferred_type=inferred_type,
+                is_enum=type_metadata.get("is_enum", False),
+                enum_values=type_metadata.get("enum_values", []),
+                unique_per_document=var_metadata.get("unique_per_document", False),
             )
 
             inferred_variables.append(variable)

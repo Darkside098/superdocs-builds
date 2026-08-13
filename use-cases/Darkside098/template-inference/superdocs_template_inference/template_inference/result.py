@@ -69,10 +69,16 @@ class VariableField:
     frequency: float = 1.0  # 0.0–1.0, fraction of documents with this variable
     confidence: float = 1.0
     evidence: list[InferenceEvidence] = field(default_factory=list)
+    # M6 enhancements (optional, for type and metadata inference)
+    inferred_type: str | None = None  # string|enum|date|datetime|time|currency|integer|email|phone|boolean
+    is_enum: bool = False  # whether values are enumerated from fixed set
+    enum_values: list[str] = field(default_factory=list)  # if is_enum=True
+    format_pattern: str | None = None  # regex/format pattern if recognized
+    unique_per_document: bool = False  # whether value is unique per document
 
     def to_dict(self) -> dict:
         """Convert to dictionary representation."""
-        return {
+        result_dict = {
             "variable_name": self.variable_name,
             "semantic_role": self.semantic_role,
             "section_context": self.section_context,
@@ -91,6 +97,17 @@ class VariableField:
                 for e in self.evidence
             ],
         }
+        # Include M6 enhancements if populated
+        if self.inferred_type is not None:
+            result_dict["inferred_type"] = self.inferred_type
+        if self.is_enum:
+            result_dict["is_enum"] = self.is_enum
+            result_dict["enum_values"] = self.enum_values
+        if self.format_pattern is not None:
+            result_dict["format_pattern"] = self.format_pattern
+        if self.unique_per_document:
+            result_dict["unique_per_document"] = self.unique_per_document
+        return result_dict
 
 
 @dataclass

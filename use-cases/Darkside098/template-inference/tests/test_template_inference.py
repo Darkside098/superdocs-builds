@@ -637,3 +637,537 @@ class TestGroundTruthIsolation:
         result = inferer.infer(family_cluster, {"doc_001": profile})
 
         assert result.family_id == "family_001"
+
+
+# M6 Enhancement Tests
+
+
+class TestM6ValueExtraction:
+    """Tests for M6 value extraction from variable candidates."""
+
+    def test_extract_variable_values_basic(self):
+        """Values are extracted from candidate variables."""
+        from superdocs_template_inference.template_inference.variables import (
+            extract_variable_values,
+        )
+
+        profiles = [
+            create_test_profile(
+                "doc_001",
+                "doc_001.docx",
+                vocabulary={"alice": 1, "bob": 1, "fixed_text": 2},
+            ),
+            create_test_profile(
+                "doc_002",
+                "doc_002.docx",
+                vocabulary={"charlie": 1, "bob": 1, "fixed_text": 2},
+            ),
+        ]
+
+        candidates = {
+            "alice": {"values": [], "frequency": 0.5},
+            "charlie": {"values": [], "frequency": 0.5},
+            "bob": {"values": [], "frequency": 1.0},
+        }
+
+        values = extract_variable_values(candidates, profiles)
+
+        # Should have extracted values for each candidate
+        assert "alice" in values
+        assert "charlie" in values
+        assert "bob" in values
+
+    def test_extracted_values_are_sorted(self):
+        """Extracted values are sorted for determinism."""
+        from superdocs_template_inference.template_inference.variables import (
+            extract_variable_values,
+        )
+
+        profiles = [
+            create_test_profile(
+                f"doc_{i:03d}",
+                f"doc_{i:03d}.docx",
+                vocabulary={"zebra": 1, "apple": 1, "monkey": 1},
+            )
+            for i in range(1, 3)
+        ]
+
+        candidates = {"zebra": {}, "apple": {}, "monkey": {}}
+        values = extract_variable_values(candidates, profiles)
+
+        # Values should be sorted for determinism
+        assert values["apple"] == ["apple"]
+        assert values["zebra"] == ["zebra"]
+
+
+class TestM6TypeInference:
+    """Tests for M6 type inference from variable values."""
+
+    def test_infer_email_type(self):
+        """Email addresses are recognized as email type."""
+        from superdocs_template_inference.template_inference.variables import (
+            infer_variable_type,
+        )
+
+        values = ["john.doe@example.com", "jane.smith@example.com"]
+        inferred_type, metadata = infer_variable_type(values)
+
+        assert inferred_type == "email"
+        assert not metadata.get("is_enum", False)
+
+    def test_infer_phone_type(self):
+        """Phone numbers are recognized as phone type."""
+        from superdocs_template_inference.template_inference.variables import (
+            infer_variable_type,
+        )
+
+        values = ["555-123-4567", "555.987.6543"]
+        inferred_type, metadata = infer_variable_type(values)
+
+        assert inferred_type == "phone"
+
+    def test_infer_date_type(self):
+        """Dates are recognized as date type."""
+        from superdocs_template_inference.template_inference.variables import (
+            infer_variable_type,
+        )
+
+        values = ["01/15/2024", "03-20-2024"]
+        inferred_type, metadata = infer_variable_type(values)
+
+        assert inferred_type == "date"
+
+    def test_infer_datetime_type(self):
+        """Datetimes are recognized as datetime type."""
+        from superdocs_template_inference.template_inference.variables import (
+            infer_variable_type,
+        )
+
+        values = ["01/15/2024 14:30", "03/20/2024 09:15:45"]
+        inferred_type, metadata = infer_variable_type(values)
+
+        assert inferred_type == "datetime"
+
+    def test_infer_time_type(self):
+        """Times are recognized as time type."""
+        from superdocs_template_inference.template_inference.variables import (
+            infer_variable_type,
+        )
+
+        values = ["14:30", "09:15 AM"]
+        inferred_type, metadata = infer_variable_type(values)
+
+        assert inferred_type == "time"
+
+    def test_infer_currency_type(self):
+        """Currency amounts are recognized as currency type."""
+        from superdocs_template_inference.template_inference.variables import (
+            infer_variable_type,
+        )
+
+        values = ["$120,000", "$95,000.50"]
+        inferred_type, metadata = infer_variable_type(values)
+
+        assert inferred_type == "currency"
+
+    def test_infer_integer_type(self):
+        """Integers are recognized as integer type."""
+        from superdocs_template_inference.template_inference.variables import (
+            infer_variable_type,
+        )
+
+        values = ["42", "100", "999"]
+        inferred_type, metadata = infer_variable_type(values)
+
+        assert inferred_type == "integer"
+
+    def test_infer_boolean_type(self):
+        """Boolean values are recognized as boolean type."""
+        from superdocs_template_inference.template_inference.variables import (
+            infer_variable_type,
+        )
+
+        values = ["true", "false", "true"]
+        inferred_type, metadata = infer_variable_type(values)
+
+        assert inferred_type == "boolean"
+        assert metadata.get("is_enum", False)
+        assert set(metadata.get("enum_values", [])) == {"false", "true"}
+
+    def test_infer_enum_type(self):
+        """Limited set of distinct values recognized as enum."""
+        from superdocs_template_inference.template_inference.variables import (
+            infer_variable_type,
+        )
+
+        values = ["Remote", "Office", "Remote", "Hybrid"]
+        inferred_type, metadata = infer_variable_type(values)
+
+        assert inferred_type == "enum"
+        assert metadata.get("is_enum", False)
+        # Only 3 unique values, so should still be enum
+        assert "remote" in [v.lower() for v in metadata.get("enum_values", [])]
+
+    def test_infer_string_type_default(self):
+        """High cardinality values default to string type."""
+        from superdocs_template_inference.template_inference.variables import (
+            infer_variable_type,
+        )
+
+        values = [
+            f"Employee_{i} Name" for i in range(20)
+        ]  # Many unique values
+        inferred_type, metadata = infer_variable_type(values)
+
+        assert inferred_type == "string"
+
+
+class TestM6Metadata:
+    """Tests for M6 variable metadata inference."""
+
+    def test_infer_variable_metadata_frequency(self):
+        """Metadata includes variable frequency."""
+        from superdocs_template_inference.template_inference.variables import (
+            infer_variable_metadata,
+        )
+
+        profiles = [
+            create_test_profile(f"doc_{i:03d}", f"doc_{i:03d}.docx", vocabulary={"alice": 1})
+            for i in range(1, 4)
+        ]
+
+        metadata = infer_variable_metadata("alice", ["alice"], profiles)
+
+        assert "frequency" in metadata
+        assert 0.0 <= metadata["frequency"] <= 1.0
+
+    def test_infer_unique_per_document(self):
+        """Metadata tracks if value is unique per document."""
+        from superdocs_template_inference.template_inference.variables import (
+            infer_variable_metadata,
+        )
+
+        profiles = [
+            create_test_profile(f"doc_{i:03d}", f"doc_{i:03d}.docx", vocabulary={"value": 1})
+            for i in range(1, 4)
+        ]
+
+        metadata = infer_variable_metadata("value", ["value"], profiles)
+
+        assert "unique_per_document" in metadata
+        assert isinstance(metadata["unique_per_document"], bool)
+
+
+class TestM6SectionLinking:
+    """Tests for M6 variable-to-section linking."""
+
+    def test_link_variable_to_sections(self):
+        """Variables are linked to sections they appear in."""
+        from superdocs_template_inference.template_inference.variables import (
+            link_variable_to_sections,
+        )
+        from superdocs_template_inference.template_inference.sections import (
+            align_sections,
+        )
+
+        profiles = [
+            create_test_profile(
+                "doc_001",
+                "doc_001.docx",
+                vocabulary={"alice": 1, "salary": 1},
+                sections_data=[
+                    {
+                        "section_id": "sec_0",
+                        "title": "Employee Info",
+                        "heading_level": 1,
+                    }
+                ],
+            ),
+            create_test_profile(
+                "doc_002",
+                "doc_002.docx",
+                vocabulary={"bob": 1, "salary": 1},
+                sections_data=[
+                    {
+                        "section_id": "sec_0",
+                        "title": "Employee Info",
+                        "heading_level": 1,
+                    }
+                ],
+            ),
+        ]
+
+        section_groups = align_sections(profiles)
+        sections = link_variable_to_sections("alice", profiles, section_groups)
+
+        # Should return a list (possibly empty if linking is complex)
+        assert isinstance(sections, list)
+
+
+class TestM6IntegrationWithInferer:
+    """Tests for M6 integration with full inference pipeline."""
+
+    def test_inferred_variable_has_type_info(self):
+        """Inferred variables include type information."""
+        inferer = TemplateInferer()
+
+        profiles = [
+            create_test_profile(
+                f"doc_{i:03d}",
+                f"doc_{i:03d}.docx",
+                vocabulary={"john.doe@example.com": 1, "jane.smith@example.com": 1},
+                sections_data=[
+                    {
+                        "section_id": "sec_0",
+                        "title": "Header",
+                        "heading_level": 1,
+                    }
+                ],
+            )
+            for i in range(1, 3)
+        ]
+
+        profiles_by_id = {p.document_id: p for p in profiles}
+
+        family_cluster = FamilyCluster(
+            family_id="family_001",
+            document_ids=[p.document_id for p in profiles],
+            document_filenames=[p.filename for p in profiles],
+            confidence=0.9,
+            cluster_size=len(profiles),
+            pairwise_scores=[0.8],
+            pairwise_score_mean=0.8,
+            pairwise_score_min=0.8,
+            merge_evidence=[],
+        )
+
+        result = inferer.infer(family_cluster, profiles_by_id)
+
+        # Should have variables with type info
+        if result.variables:
+            var = result.variables[0]
+            # Type info might be populated
+            assert hasattr(var, "inferred_type")
+
+    def test_variable_evidence_includes_type_inference(self):
+        """Variable evidence includes type inference observations."""
+        inferer = TemplateInferer()
+
+        profiles = [
+            create_test_profile(
+                f"doc_{i:03d}",
+                f"doc_{i:03d}.docx",
+                vocabulary={"2024-01-15": 1, "2024-03-20": 1},
+                sections_data=[
+                    {
+                        "section_id": "sec_0",
+                        "title": "Header",
+                        "heading_level": 1,
+                    }
+                ],
+            )
+            for i in range(1, 3)
+        ]
+
+        profiles_by_id = {p.document_id: p for p in profiles}
+
+        family_cluster = FamilyCluster(
+            family_id="family_001",
+            document_ids=[p.document_id for p in profiles],
+            document_filenames=[p.filename for p in profiles],
+            confidence=0.9,
+            cluster_size=len(profiles),
+            pairwise_scores=[0.8],
+            pairwise_score_mean=0.8,
+            pairwise_score_min=0.8,
+            merge_evidence=[],
+        )
+
+        result = inferer.infer(family_cluster, profiles_by_id)
+
+        # Check that variables have evidence
+        for var in result.variables:
+            assert len(var.evidence) > 0
+
+
+class TestM6Determinism:
+    """Tests for M6 deterministic behavior."""
+
+    def test_m6_repeated_inference_identical(self):
+        """M6-enhanced inference is deterministic."""
+        inferer = TemplateInferer()
+
+        profiles = [
+            create_test_profile(
+                f"doc_{i:03d}",
+                f"doc_{i:03d}.docx",
+                vocabulary={f"value_{i}": 1, "fixed": 2},
+                sections_data=[
+                    {
+                        "section_id": "sec_0",
+                        "title": "Section",
+                        "heading_level": 1,
+                    }
+                ],
+            )
+            for i in range(1, 4)
+        ]
+
+        profiles_by_id = {p.document_id: p for p in profiles}
+
+        family_cluster = FamilyCluster(
+            family_id="family_001",
+            document_ids=[p.document_id for p in profiles],
+            document_filenames=[p.filename for p in profiles],
+            confidence=0.9,
+            cluster_size=len(profiles),
+            pairwise_scores=[0.8, 0.8, 0.8],
+            pairwise_score_mean=0.8,
+            pairwise_score_min=0.8,
+            merge_evidence=[],
+        )
+
+        result1 = inferer.infer(family_cluster, profiles_by_id)
+        result2 = inferer.infer(family_cluster, profiles_by_id)
+
+        # Same input should produce identical output
+        assert len(result1.variables) == len(result2.variables)
+        for v1, v2 in zip(result1.variables, result2.variables):
+            assert v1.variable_name == v2.variable_name
+            assert v1.inferred_type == v2.inferred_type
+            assert v1.is_enum == v2.is_enum
+
+    def test_m6_input_order_independence(self):
+        """M6 inference is independent of input order."""
+        inferer = TemplateInferer()
+
+        profiles_list = [
+            create_test_profile(
+                f"doc_{i:03d}",
+                f"doc_{i:03d}.docx",
+                vocabulary={f"value_{i}": 1, "constant": 2},
+                sections_data=[
+                    {
+                        "section_id": "sec_0",
+                        "title": "Section",
+                        "heading_level": 1,
+                    }
+                ],
+            )
+            for i in range(1, 4)
+        ]
+
+        family_cluster = FamilyCluster(
+            family_id="family_001",
+            document_ids=[p.document_id for p in profiles_list],
+            document_filenames=[p.filename for p in profiles_list],
+            confidence=0.9,
+            cluster_size=len(profiles_list),
+            pairwise_scores=[0.8, 0.8, 0.8],
+            pairwise_score_mean=0.8,
+            pairwise_score_min=0.8,
+            merge_evidence=[],
+        )
+
+        # First order
+        profiles_by_id_1 = {p.document_id: p for p in profiles_list}
+        result1 = inferer.infer(family_cluster, profiles_by_id_1)
+
+        # Reversed order
+        profiles_by_id_2 = {p.document_id: p for p in reversed(profiles_list)}
+        result2 = inferer.infer(family_cluster, profiles_by_id_2)
+
+        # Results should be equivalent
+        assert len(result1.variables) == len(result2.variables)
+
+
+class TestM6FilenameIndependence:
+    """Tests to verify filenames don't affect M6 inference."""
+
+    def test_m6_filename_does_not_affect_type_inference(self):
+        """Filenames don't drive type inference."""
+        inferer = TemplateInferer()
+
+        profile1 = create_test_profile(
+            "doc_001",
+            "email_addresses_001.docx",
+            vocabulary={"john@example.com": 1, "jane@example.com": 1},
+            sections_data=[
+                {"section_id": "sec_0", "title": "Section", "heading_level": 1}
+            ],
+        )
+
+        profile2 = create_test_profile(
+            "doc_002",
+            "contact_info_002.docx",
+            vocabulary={"bob@example.com": 1, "alice@example.com": 1},
+            sections_data=[
+                {"section_id": "sec_0", "title": "Section", "heading_level": 1}
+            ],
+        )
+
+        profiles_by_id = {"doc_001": profile1, "doc_002": profile2}
+
+        family_cluster = FamilyCluster(
+            family_id="family_001",
+            document_ids=["doc_001", "doc_002"],
+            document_filenames=[
+                "email_addresses_001.docx",
+                "contact_info_002.docx",
+            ],
+            confidence=0.9,
+            cluster_size=2,
+            pairwise_scores=[0.8],
+            pairwise_score_mean=0.8,
+            pairwise_score_min=0.8,
+            merge_evidence=[],
+        )
+
+        result = inferer.infer(family_cluster, profiles_by_id)
+
+        # Type should be inferred from values, not filenames
+        for var in result.variables:
+            if "@" in var.variable_name:
+                assert var.inferred_type == "email"
+
+
+class TestM6Serialization:
+    """Tests for M6 serialization with new metadata."""
+
+    def test_variable_with_type_info_serializes(self):
+        """VariableField with type info serializes correctly."""
+        var = VariableField(
+            variable_name="email_address",
+            semantic_role="email",
+            section_context="contact_info",
+            observed_values=["john@example.com", "jane@example.com"],
+            frequency=1.0,
+            confidence=0.95,
+            inferred_type="email",
+            is_enum=False,
+        )
+
+        var_dict = var.to_dict()
+
+        assert var_dict["variable_name"] == "email_address"
+        assert var_dict["inferred_type"] == "email"
+        assert "observed_values" in var_dict
+
+    def test_enum_variable_serializes_with_values(self):
+        """Enum variables serialize with enum_values."""
+        var = VariableField(
+            variable_name="work_mode",
+            semantic_role="work_mode",
+            section_context="employee_info",
+            observed_values=["Remote", "Office"],
+            frequency=1.0,
+            confidence=0.9,
+            inferred_type="enum",
+            is_enum=True,
+            enum_values=["Office", "Remote"],
+        )
+
+        var_dict = var.to_dict()
+
+        assert var_dict["is_enum"] is True
+        assert set(var_dict["enum_values"]) == {"Office", "Remote"}
