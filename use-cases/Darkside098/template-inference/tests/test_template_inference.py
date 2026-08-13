@@ -1002,6 +1002,126 @@ class TestGroundTruthIsolation:
 # M6 Enhancement Tests
 
 
+class TestContextualSemanticVariableDetection:
+    """Tests for contextual semantic-variable detection without using ground truth."""
+
+    def test_rejects_ordinary_vocabulary_tokens(self):
+        """Ordinary words are rejected without field-like evidence."""
+        from superdocs_template_inference.template_inference.variables import detect_variables
+
+        profiles = [
+            create_test_profile(
+                "doc_001",
+                "doc_001.docx",
+                vocabulary={"aboard": 3, "addition": 2, "appropriate": 2, "support": 4, "your": 5},
+            ),
+            create_test_profile(
+                "doc_002",
+                "doc_002.docx",
+                vocabulary={"aboard": 2, "addition": 3, "appropriate": 2, "support": 5, "your": 4},
+            ),
+        ]
+
+        candidates = detect_variables(profiles)
+        assert "aboard" not in candidates
+        assert "addition" not in candidates
+        assert "appropriate" not in candidates
+        assert "support" not in candidates
+        assert "your" not in candidates
+
+    def test_prevents_false_enum_classification(self):
+        """Only bounded categorical values become enum; ordinary words do not."""
+        from superdocs_template_inference.template_inference.variables import infer_variable_type
+
+        assert infer_variable_type(["appropriately", "assistance", "addition", "support"])[0] == "string"
+        assert infer_variable_type(["remote", "office", "hybrid"])[0] == "enum"
+
+    def test_accepts_strongly_contextual_field_value_candidate(self):
+        """A token with explicit field context survives detection."""
+        from superdocs_template_inference.template_inference.variables import detect_variables
+
+        profiles = [
+            create_test_profile(
+                "doc_001",
+                "doc_001.docx",
+                vocabulary={"manager": 2, "team": 1, "your": 5},
+                sections_data=[{"section_id": "sec_0", "title": "Reporting Manager", "heading_level": 1}],
+            ),
+            create_test_profile(
+                "doc_002",
+                "doc_002.docx",
+                vocabulary={"supervisor": 2, "team": 1, "your": 5},
+                sections_data=[{"section_id": "sec_0", "title": "Reporting Manager", "heading_level": 1}],
+            ),
+        ]
+
+        candidates = detect_variables(profiles)
+        assert "manager" in candidates or "supervisor" in candidates
+        assert any(info["values"] for info in candidates.values())
+
+    def test_preserves_actual_observed_values(self):
+        """When a candidate is accepted, actual observed values are retained."""
+        from superdocs_template_inference.template_inference.variables import detect_variables
+
+        profiles = [
+            create_test_profile(
+                "doc_001",
+                "doc_001.docx",
+                vocabulary={"remote": 2, "office": 1, "your": 4},
+                sections_data=[{"section_id": "sec_0", "title": "Work Mode", "heading_level": 1}],
+            ),
+            create_test_profile(
+                "doc_002",
+                "doc_002.docx",
+                vocabulary={"hybrid": 2, "office": 1, "your": 4},
+                sections_data=[{"section_id": "sec_0", "title": "Work Mode", "heading_level": 1}],
+            ),
+        ]
+
+        candidates = detect_variables(profiles)
+        accepted = next(iter(candidates.values()))
+        assert accepted["values"]
+        assert "remote" in accepted["values"] or "hybrid" in accepted["values"] or "office" in accepted["values"]
+
+    def test_detect_variables_is_deterministic_and_filename_independent(self):
+        """Candidate selection is stable and not driven by filenames."""
+        from superdocs_template_inference.template_inference.variables import detect_variables
+
+        profile_a = create_test_profile(
+            "doc_001",
+            "alpha_name.docx",
+            vocabulary={"manager": 3, "team": 2, "your": 5},
+            sections_data=[{"section_id": "sec_0", "title": "Reporting Manager", "heading_level": 1}],
+        )
+        profile_b = create_test_profile(
+            "doc_002",
+            "beta_name.docx",
+            vocabulary={"supervisor": 3, "team": 2, "your": 5},
+            sections_data=[{"section_id": "sec_0", "title": "Reporting Manager", "heading_level": 1}],
+        )
+
+        result_1 = detect_variables([profile_a, profile_b])
+        result_2 = detect_variables([profile_b, profile_a])
+
+        assert list(result_1.keys()) == list(result_2.keys())
+        assert result_1 == result_2
+
+    def test_ground_truth_isolation_and_filename_independence(self):
+        """Selection is based only on profile evidence, never filenames or benchmark names."""
+        from superdocs_template_inference.template_inference.variables import detect_variables
+
+        candidates_a = detect_variables([
+            create_test_profile("doc_001", "offer_001_actual_letter.docx", vocabulary={"manager": 3, "team": 2, "your": 5}, sections_data=[{"section_id": "sec_0", "title": "Reporting Manager", "heading_level": 1}]),
+            create_test_profile("doc_002", "offer_002_actual_letter.docx", vocabulary={"supervisor": 3, "team": 2, "your": 5}, sections_data=[{"section_id": "sec_0", "title": "Reporting Manager", "heading_level": 1}]),
+        ])
+        candidates_b = detect_variables([
+            create_test_profile("doc_003", "onboarding_003_actual_letter.docx", vocabulary={"manager": 3, "team": 2, "your": 5}, sections_data=[{"section_id": "sec_0", "title": "Reporting Manager", "heading_level": 1}]),
+            create_test_profile("doc_004", "onboarding_004_actual_letter.docx", vocabulary={"supervisor": 3, "team": 2, "your": 5}, sections_data=[{"section_id": "sec_0", "title": "Reporting Manager", "heading_level": 1}]),
+        ])
+
+        assert candidates_a == candidates_b
+
+
 class TestM6ValueExtraction:
     """Tests for M6 value extraction from variable candidates."""
 
