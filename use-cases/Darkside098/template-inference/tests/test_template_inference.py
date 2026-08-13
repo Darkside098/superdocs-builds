@@ -363,6 +363,366 @@ class TestSectionPresenceVariation:
         assert result.family_id == "family_001"
 
 
+class TestConditionalInference:
+    """Focused tests for conditional-section inference."""
+
+    def test_genuine_conditional_section(self):
+        """A section with repeated field/value evidence becomes CONDITIONAL."""
+        inferer = TemplateInferer()
+
+        profiles = [
+            create_test_profile(
+                "doc_001",
+                "doc_001.docx",
+                vocabulary={"remote": 2, "setup": 1, "manager": 1},
+                sections_data=[{"section_id": "sec_remote", "title": "Remote Work Setup"}],
+            ),
+            create_test_profile(
+                "doc_002",
+                "doc_002.docx",
+                vocabulary={"remote": 2, "setup": 1, "manager": 1},
+                sections_data=[{"section_id": "sec_remote_2", "title": "Remote Work Setup"}],
+            ),
+            create_test_profile(
+                "doc_003",
+                "doc_003.docx",
+                vocabulary={"office": 2, "manager": 1},
+                sections_data=[],
+            ),
+        ]
+
+        family_cluster = FamilyCluster(
+            family_id="family_001",
+            document_ids=[p.document_id for p in profiles],
+            document_filenames=[p.filename for p in profiles],
+            confidence=0.9,
+            cluster_size=3,
+            pairwise_scores=[0.8, 0.8, 0.8],
+            pairwise_score_mean=0.8,
+            pairwise_score_min=0.8,
+            merge_evidence=[],
+        )
+
+        result = inferer.infer(family_cluster, {p.document_id: p for p in profiles})
+        section = next(
+            (s for s in result.sections if s.title_or_pattern == "remote work setup"),
+            None,
+        )
+
+        assert section is not None
+        assert section.inferred_type == "CONDITIONAL"
+        assert section.conditional_info is not None
+        assert any(
+            cr.target_section == "remote work setup" for cr in result.conditional_rules
+        )
+
+    def test_optional_but_nonconditional_section(self):
+        """A section that varies without a discriminating field/value stays OPTIONAL."""
+        inferer = TemplateInferer()
+
+        profiles = [
+            create_test_profile(
+                "doc_001",
+                "doc_001.docx",
+                vocabulary={"notes": 2, "misc": 1},
+                sections_data=[{"section_id": "sec_notes", "title": "Notes"}],
+            ),
+            create_test_profile(
+                "doc_002",
+                "doc_002.docx",
+                vocabulary={"summary": 2, "misc": 1},
+                sections_data=[],
+            ),
+        ]
+
+        family_cluster = FamilyCluster(
+            family_id="family_001",
+            document_ids=[p.document_id for p in profiles],
+            document_filenames=[p.filename for p in profiles],
+            confidence=0.8,
+            cluster_size=2,
+            pairwise_scores=[0.7],
+            pairwise_score_mean=0.7,
+            pairwise_score_min=0.7,
+            merge_evidence=[],
+        )
+
+        result = inferer.infer(family_cluster, {p.document_id: p for p in profiles})
+        section = next((s for s in result.sections if s.title_or_pattern == "notes"), None)
+
+        assert section is not None
+        assert section.inferred_type == "OPTIONAL"
+        assert not any(cr.target_section == "notes" for cr in result.conditional_rules)
+
+    def test_no_condition_case_keeps_section_optional(self):
+        """No sufficiently strong condition produces neither a conditional section nor a rule."""
+        inferer = TemplateInferer()
+
+        profiles = [
+            create_test_profile(
+                "doc_001",
+                "doc_001.docx",
+                vocabulary={"custom": 1, "misc": 1},
+                sections_data=[{"section_id": "sec_custom", "title": "Custom Addendum"}],
+            ),
+            create_test_profile(
+                "doc_002",
+                "doc_002.docx",
+                vocabulary={"other": 1, "misc": 1},
+                sections_data=[],
+            ),
+            create_test_profile(
+                "doc_003",
+                "doc_003.docx",
+                vocabulary={"extra": 1, "misc": 1},
+                sections_data=[],
+            ),
+        ]
+
+        family_cluster = FamilyCluster(
+            family_id="family_001",
+            document_ids=[p.document_id for p in profiles],
+            document_filenames=[p.filename for p in profiles],
+            confidence=0.8,
+            cluster_size=3,
+            pairwise_scores=[0.7, 0.7, 0.7],
+            pairwise_score_mean=0.7,
+            pairwise_score_min=0.7,
+            merge_evidence=[],
+        )
+
+        result = inferer.infer(family_cluster, {p.document_id: p for p in profiles})
+        section = next(
+            (s for s in result.sections if s.title_or_pattern == "custom addendum"),
+            None,
+        )
+
+        assert section is not None
+        assert section.inferred_type == "OPTIONAL"
+        assert all(cr.target_section != "custom addendum" for cr in result.conditional_rules)
+
+    def test_field_value_condition_and_evidence(self):
+        """Rule shape uses structured field/operator/value and evidence from both groups."""
+        inferer = TemplateInferer()
+
+        profiles = [
+            create_test_profile(
+                "doc_001",
+                "doc_001.docx",
+                vocabulary={"remote": 1, "setup": 1},
+                sections_data=[{"title": "Remote Work Setup"}],
+            ),
+            create_test_profile(
+                "doc_002",
+                "doc_002.docx",
+                vocabulary={"remote": 1, "setup": 1},
+                sections_data=[{"title": "Remote Work Setup"}],
+            ),
+            create_test_profile(
+                "doc_003",
+                "doc_003.docx",
+                vocabulary={"office": 1, "setup": 1},
+                sections_data=[],
+            ),
+        ]
+
+        result = inferer.infer(
+            FamilyCluster(
+                family_id="family_001",
+                document_ids=[p.document_id for p in profiles],
+                document_filenames=[p.filename for p in profiles],
+                confidence=0.9,
+                cluster_size=3,
+                pairwise_scores=[0.8, 0.8, 0.8],
+                pairwise_score_mean=0.8,
+                pairwise_score_min=0.8,
+                merge_evidence=[],
+            ),
+            {p.document_id: p for p in profiles},
+        )
+
+        rule = next((cr for cr in result.conditional_rules if cr.target_section == "remote work setup"), None)
+        assert rule is not None
+        assert set(rule.condition.keys()) >= {"field", "operator", "value"}
+        assert rule.condition["field"] in {"variable_observation", "document_attribute"}
+        assert rule.condition["value"] == "remote"
+        assert len(rule.supporting_evidence) >= 1
+        assert all("source_document_ids" in e or "document_ids" in e for e in [
+            ev.__dict__ for ev in rule.supporting_evidence
+        ])
+
+    def test_section_conditional_info_populated(self):
+        """Conditional sections expose section-level conditional_info."""
+        inferer = TemplateInferer()
+
+        profiles = [
+            create_test_profile(
+                "doc_001",
+                "doc_001.docx",
+                vocabulary={"remote": 1, "setup": 1},
+                sections_data=[{"title": "Remote Work Setup"}],
+            ),
+            create_test_profile(
+                "doc_002",
+                "doc_002.docx",
+                vocabulary={"remote": 1, "setup": 1},
+                sections_data=[{"title": "Remote Work Setup"}],
+            ),
+            create_test_profile(
+                "doc_003",
+                "doc_003.docx",
+                vocabulary={"office": 1},
+                sections_data=[],
+            ),
+        ]
+
+        result = inferer.infer(
+            FamilyCluster(
+                family_id="family_001",
+                document_ids=[p.document_id for p in profiles],
+                document_filenames=[p.filename for p in profiles],
+                confidence=0.9,
+                cluster_size=3,
+                pairwise_scores=[0.8, 0.8, 0.8],
+                pairwise_score_mean=0.8,
+                pairwise_score_min=0.8,
+                merge_evidence=[],
+            ),
+            {p.document_id: p for p in profiles},
+        )
+
+        section = next(
+            (s for s in result.sections if s.title_or_pattern == "remote work setup"),
+            None,
+        )
+        assert section is not None
+        assert section.conditional_info is not None
+        assert section.conditional_info["condition"]["value"] == "remote"
+
+    def test_conditional_rule_is_deterministic(self):
+        """Repeated inference on identical data picks the same rule and ordering."""
+        inferer = TemplateInferer()
+        profiles = [
+            create_test_profile(
+                "doc_001",
+                "doc_001.docx",
+                vocabulary={"remote": 1, "setup": 1},
+                sections_data=[{"title": "Remote Work Setup"}],
+            ),
+            create_test_profile(
+                "doc_002",
+                "doc_002.docx",
+                vocabulary={"remote": 1, "setup": 1},
+                sections_data=[{"title": "Remote Work Setup"}],
+            ),
+            create_test_profile(
+                "doc_003",
+                "doc_003.docx",
+                vocabulary={"office": 1},
+                sections_data=[],
+            ),
+        ]
+
+        family_cluster = FamilyCluster(
+            family_id="family_001",
+            document_ids=[p.document_id for p in profiles],
+            document_filenames=[p.filename for p in profiles],
+            confidence=0.9,
+            cluster_size=3,
+            pairwise_scores=[0.8, 0.8, 0.8],
+            pairwise_score_mean=0.8,
+            pairwise_score_min=0.8,
+            merge_evidence=[],
+        )
+
+        result1 = inferer.infer(family_cluster, {p.document_id: p for p in profiles})
+        result2 = inferer.infer(family_cluster, {p.document_id: p for p in profiles})
+
+        assert [cr.condition for cr in result1.conditional_rules] == [
+            cr.condition for cr in result2.conditional_rules
+        ]
+
+    def test_input_order_independence_and_filename_independence(self):
+        """Conditional inference is based on content, not order or filenames."""
+        inferer = TemplateInferer()
+        profiles = [
+            create_test_profile(
+                "doc_001",
+                "offer_001.docx",
+                vocabulary={"remote": 1, "setup": 1},
+                sections_data=[{"title": "Remote Work Setup"}],
+            ),
+            create_test_profile(
+                "doc_002",
+                "offer_002.docx",
+                vocabulary={"remote": 1, "setup": 1},
+                sections_data=[{"title": "Remote Work Setup"}],
+            ),
+            create_test_profile(
+                "doc_003",
+                "different_name_003.docx",
+                vocabulary={"office": 1},
+                sections_data=[],
+            ),
+        ]
+
+        family_cluster_1 = FamilyCluster(
+            family_id="family_001",
+            document_ids=[p.document_id for p in profiles],
+            document_filenames=[p.filename for p in profiles],
+            confidence=0.9,
+            cluster_size=3,
+            pairwise_scores=[0.8, 0.8, 0.8],
+            pairwise_score_mean=0.8,
+            pairwise_score_min=0.8,
+            merge_evidence=[],
+        )
+
+        family_cluster_2 = FamilyCluster(
+            family_id="family_001",
+            document_ids=[p.document_id for p in reversed(profiles)],
+            document_filenames=[p.filename for p in reversed(profiles)],
+            confidence=0.9,
+            cluster_size=3,
+            pairwise_scores=[0.8, 0.8, 0.8],
+            pairwise_score_mean=0.8,
+            pairwise_score_min=0.8,
+            merge_evidence=[],
+        )
+
+        result1 = inferer.infer(family_cluster_1, {p.document_id: p for p in profiles})
+        result2 = inferer.infer(family_cluster_2, {p.document_id: p for p in reversed(profiles)})
+
+        assert [cr.target_section for cr in result1.conditional_rules] == [
+            cr.target_section for cr in result2.conditional_rules
+        ]
+
+    def test_conditional_rule_serialization_backward_compatible(self):
+        """Conditional rules serialize with section_name/condition/confidence/evidence while remaining backward compatible."""
+        rule = ConditionalRule(
+            target_section="Remote Work Setup",
+            condition={"field": "variable_observation", "operator": "equals", "value": "remote"},
+            supporting_evidence=[
+                InferenceEvidence(
+                    evidence_type="conditional_correlation",
+                    source_document_ids=["doc_001", "doc_002"],
+                    related_section="Remote Work Setup",
+                    observation="remote observed in docs with section",
+                    confidence_contribution=0.8,
+                )
+            ],
+            confidence=0.8,
+            status="inferred",
+        )
+
+        payload = rule.to_dict()
+        assert payload["section_name"] == "Remote Work Setup"
+        assert payload["condition"]["value"] == "remote"
+        assert payload["confidence"] == 0.8
+        assert len(payload["evidence"]) == 1
+        assert payload["target_section"] == "Remote Work Setup"
+
+
 class TestDeterminism:
     """Tests for deterministic inference."""
 

@@ -122,20 +122,23 @@ class ConditionalRule:
 
     def to_dict(self) -> dict:
         """Convert to dictionary representation."""
+        evidence_payload = [
+            {
+                "evidence_type": e.evidence_type,
+                "source_document_ids": e.source_document_ids,
+                "related_section": e.related_section,
+                "related_variable": e.related_variable,
+                "observation": e.observation,
+                "confidence_contribution": e.confidence_contribution,
+            }
+            for e in self.supporting_evidence
+        ]
         return {
             "target_section": self.target_section,
+            "section_name": self.target_section,
             "condition": self.condition,
-            "supporting_evidence": [
-                {
-                    "evidence_type": e.evidence_type,
-                    "source_document_ids": e.source_document_ids,
-                    "related_section": e.related_section,
-                    "related_variable": e.related_variable,
-                    "observation": e.observation,
-                    "confidence_contribution": e.confidence_contribution,
-                }
-                for e in self.supporting_evidence
-            ],
+            "supporting_evidence": evidence_payload,
+            "evidence": evidence_payload,
             "confidence": self.confidence,
             "status": self.status,
         }

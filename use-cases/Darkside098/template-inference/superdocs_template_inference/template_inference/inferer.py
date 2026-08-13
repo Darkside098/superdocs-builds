@@ -225,20 +225,35 @@ class TemplateInferer:
             condition = rule_data.get("condition", {})
             evidence_data = rule_data.get("evidence", {})
 
+            supporting_evidence = [
+                InferenceEvidence(
+                    evidence_type="conditional_correlation",
+                    source_document_ids=evidence_data.get("docs_with_section", []),
+                    related_section=section_name,
+                    related_variable=condition.get("value"),
+                    observation=(
+                        f"Observed {condition.get('field', 'variable_observation')}={condition.get('value')} "
+                        f"in documents with section and not in documents without it"
+                    ),
+                    confidence_contribution=rule_data.get("confidence", 0.7),
+                ),
+                InferenceEvidence(
+                    evidence_type="conditional_correlation",
+                    source_document_ids=evidence_data.get("docs_without_section", []),
+                    related_section=section_name,
+                    related_variable=condition.get("value"),
+                    observation=(
+                        f"Observed absence of {condition.get('field', 'variable_observation')}={condition.get('value')} "
+                        f"in documents without the section"
+                    ),
+                    confidence_contribution=max(0.0, 1.0 - rule_data.get("confidence", 0.7)),
+                ),
+            ]
+
             conditional = ConditionalRule(
                 target_section=section_name,
                 condition=condition,
-                supporting_evidence=[
-                    InferenceEvidence(
-                        evidence_type="conditional_correlation",
-                        source_document_ids=evidence_data.get(
-                            "docs_with_section", []
-                        ),
-                        related_section=section_name,
-                        observation=f"Section presence correlates with condition",
-                        confidence_contribution=rule_data.get("confidence", 0.7),
-                    )
-                ],
+                supporting_evidence=supporting_evidence,
                 confidence=rule_data.get("confidence", 0.7),
                 status=rule_data.get("status", "inferred"),
             )
@@ -246,6 +261,18 @@ class TemplateInferer:
             inferred_conditionals.append(conditional)
 
         result.conditional_rules = inferred_conditionals
+
+        for section in result.sections:
+            section_key = section.title_or_pattern.lower()
+            if section_key in conditional_rules_dict:
+                section.inferred_type = "CONDITIONAL"
+                section.presence_type = "conditional"
+                section.conditional_info = {
+                    "section_name": section.title_or_pattern,
+                    "condition": conditional_rules_dict[section_key]["condition"],
+                    "confidence": conditional_rules_dict[section_key].get("confidence", 0.7),
+                    "evidence": conditional_rules_dict[section_key].get("evidence", {}),
+                }
 
         # 6. Calculate family-level confidence
         if result.sections:

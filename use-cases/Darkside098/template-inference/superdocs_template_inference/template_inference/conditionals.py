@@ -1,6 +1,44 @@
 """Conditional section and rule inference."""
 
+from __future__ import annotations
+
 from superdocs_template_inference.models import DocumentProfile
+
+
+def _normalize_condition_value(value: str) -> str:
+    """Normalize value strings for deterministic comparison."""
+    return " ".join(str(value).strip().lower().split())
+
+
+def _section_tokens(section_name: str) -> set[str]:
+    """Extract normalized token set from a section title for noise filtering."""
+    if not section_name:
+        return set()
+    return {_normalize_condition_value(token) for token in section_name.split()}
+
+
+def _is_generic_condition_token(token: str) -> bool:
+    """Filter obvious section-title noise words from conditional candidates."""
+    generic = {
+        "section",
+        "sections",
+        "work",
+        "setup",
+        "details",
+        "summary",
+        "information",
+        "content",
+        "header",
+        "document",
+        "general",
+        "addendum",
+        "custom",
+        "notes",
+        "info",
+        "overview",
+        "details",
+    }
+    return token in generic
 
 
 def infer_conditional_rules(
@@ -8,30 +46,21 @@ def infer_conditional_rules(
 ) -> dict[str, dict]:
     """Infer conditional rules for optional sections.
 
-    A section should only be labeled conditional if there is evidence
-    connecting presence/absence to an observable variable/condition.
-
-    Args:
-        profiles: List of DocumentProfile objects from a single family.
-        optional_sections: List of section titles that are optional (varying presence).
-
-    Returns:
-        Mapping {section_name: {condition, evidence, confidence}}.
+    A section is only promoted to conditional when an observed field/value pattern
+    is repeated in documents containing the section and absent from those without it.
     """
     conditional_rules: dict[str, dict] = {}
 
     if not optional_sections or len(profiles) < 2:
         return conditional_rules
 
-    # For each optional section, check if presence correlates with variables
-    for section_name in optional_sections:
-        # Determine which documents have this section
+    for section_name in sorted(set(optional_sections), key=lambda s: s.lower()):
         docs_with_section = []
         docs_without_section = []
 
         for profile in profiles:
             has_section = any(
-                s.title and s.title.lower() == section_name.lower()
+                s.title and _normalize_condition_value(s.title) == _normalize_condition_value(section_name)
                 for s in profile.sections
             )
             if has_section:
@@ -39,27 +68,32 @@ def infer_conditional_rules(
             else:
                 docs_without_section.append(profile)
 
-        # If section is present in 0 or all documents, skip
         if not docs_with_section or not docs_without_section:
             continue
 
-        # Check for correlation with observable differences
         condition = find_section_condition(
             docs_with_section, docs_without_section, section_name
         )
+        if not condition:
+            continue
 
-        if condition:
-            conditional_rules[section_name] = {
-                "condition": condition,
-                "evidence": {
-                    "docs_with_section": [d.document_id for d in docs_with_section],
-                    "docs_without_section": [
-                        d.document_id for d in docs_without_section
-                    ],
-                },
-                "confidence": 0.7,  # Conservative default
-                "status": "inferred",
-            }
+        conditional_rules[section_name] = {
+            "condition": {
+                "field": condition["field"],
+                "operator": condition["operator"],
+                "value": condition["value"],
+            },
+            "evidence": {
+                "docs_with_section": [d.document_id for d in docs_with_section],
+                "docs_without_section": [d.document_id for d in docs_without_section],
+                "observed_field": condition["field"],
+                "observed_value": condition["value"],
+                "with_frequency": condition["with_frequency"],
+                "without_frequency": condition["without_frequency"],
+            },
+            "confidence": float(condition["confidence"]),
+            "status": "inferred",
+        }
 
     return conditional_rules
 
@@ -69,53 +103,83 @@ def find_section_condition(
     docs_without_section: list[DocumentProfile],
     section_name: str,
 ) -> dict | None:
-    """Try to find an observable condition that explains section presence.
+    """Try to find a strong, evidence-backed condition that predicts section presence.
 
-    Args:
-        docs_with_section: Profiles that have the section.
-        docs_without_section: Profiles that lack the section.
-        section_name: The section name being investigated.
-
-    Returns:
-        A condition dict {field, operator, value} or None if no clear condition found.
+    Returns a dict with field/operator/value and confidence when a deterministic
+    pattern is observed; otherwise returns None.
     """
     if not docs_with_section or not docs_without_section:
         return None
 
-    # Collect vocabulary differences
-    vocab_with = set()
-    for profile in docs_with_section:
-        vocab_with.update(profile.content.vocabulary.keys())
+    section_tokens = _section_tokens(section_name)
+    candidate_scores: list[tuple[float, str, int, int, float, float, str]] = []
+    seen_terms: set[str] = set()
 
-    vocab_without = set()
-    for profile in docs_without_section:
-        vocab_without.update(profile.content.vocabulary.keys())
+    for profile in docs_with_section + docs_without_section:
+        for term in profile.content.vocabulary:
+            normalized = _normalize_condition_value(term)
+            if not normalized:
+                continue
+            if normalized in section_tokens and _is_generic_condition_token(normalized):
+                continue
+            if normalized in seen_terms:
+                continue
+            seen_terms.add(normalized)
 
-    # Find words that appear mainly in docs_with but rarely in docs_without
-    potential_condition_words = []
+            with_count = sum(
+                1 for p in docs_with_section if normalized in p.content.vocabulary
+            )
+            without_count = sum(
+                1 for p in docs_without_section if normalized in p.content.vocabulary
+            )
+            with_total = len(docs_with_section)
+            without_total = len(docs_without_section)
 
-    for word in vocab_with:
-        with_count = sum(
-            1 for p in docs_with_section if word in p.content.vocabulary
-        )
-        without_count = sum(
-            1 for p in docs_without_section if word in p.content.vocabulary
-        )
+            with_ratio = with_count / with_total if with_total else 0.0
+            without_ratio = without_count / without_total if without_total else 0.0
 
-        # Strong signal if word appears in most docs_with and few/none docs_without
-        if with_count >= len(docs_with_section) * 0.7 and without_count < len(
-            docs_without_section
-        ) * 0.3:
-            potential_condition_words.append((word, with_count, without_count))
+            # Require repeated evidence: strong presence in docs with the section,
+            # and weak presence in docs without it.
+            if with_count < max(1, with_total // 2):
+                continue
+            if with_ratio < 0.6 or without_ratio > 0.35:
+                continue
 
-    # Use the strongest signal as the condition
-    if potential_condition_words:
-        best_word = max(potential_condition_words, key=lambda x: x[1] - x[2])[0]
+            # Score combines predictive strength and support.
+            score = (
+                0.55 * (with_ratio - without_ratio)
+                + 0.25 * with_ratio
+                + 0.20 * (1.0 - without_ratio)
+            )
+            if score < 0.35:
+                continue
 
-        return {
-            "field": "document_attribute",
-            "operator": "contains",
-            "value": best_word,
-        }
+            operator = "contains" if " " in normalized else "equals"
+            candidate_scores.append(
+                (score, normalized, with_count, without_count, with_ratio, without_ratio, operator)
+            )
 
-    return None
+    if not candidate_scores:
+        return None
+
+    # Deterministic tie-break: highest score, then higher support, then lexical order.
+    candidate_scores.sort(
+        key=lambda item: (
+            item[0],
+            item[2],
+            -item[3],
+            item[1],
+        ),
+        reverse=True,
+    )
+    score, value, with_count, without_count, with_ratio, without_ratio, operator = candidate_scores[0]
+
+    confidence = min(0.99, max(0.5, round(score, 3)))
+    return {
+        "field": "variable_observation",
+        "operator": operator,
+        "value": value,
+        "with_frequency": round(with_ratio, 3),
+        "without_frequency": round(without_ratio, 3),
+        "confidence": confidence,
+    }
