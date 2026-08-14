@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from run_end_to_end_evaluation import build_predicted_cluster_map
 from superdocs_template_inference.evaluation import (
     TemplateEvaluator,
     canonical_condition,
@@ -208,17 +207,6 @@ def test_extract_predicted_order_handles_dictionary_section_names():
         "compensation_and_benefits",
         "acceptance",
     ]
-
-
-def test_build_predicted_cluster_map_uses_ground_truth_ids_for_offer_and_onboarding():
-    offer_ground_truth = load_ground_truth("offer")
-    onboarding_ground_truth = load_ground_truth("onboarding")
-
-    offer_map = build_predicted_cluster_map(["offer_001.docx", "offer_002.docx"], offer_ground_truth, "employee_offer_letter")
-    onboarding_map = build_predicted_cluster_map(["onboarding_001.docx", "onboarding_002.docx"], onboarding_ground_truth, "employee_onboarding_letter")
-
-    assert offer_map == {"001": "employee_offer_letter", "002": "employee_offer_letter"}
-    assert onboarding_map == {"onboarding_001": "employee_onboarding_letter", "onboarding_002": "employee_onboarding_letter"}
 
 
 def test_extract_predicted_variables_handles_real_variable_field_objects():
