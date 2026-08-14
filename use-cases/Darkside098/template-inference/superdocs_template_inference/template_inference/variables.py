@@ -945,6 +945,54 @@ def infer_variable_metadata(
     }
 
 
+def _normalize_section_title(value: str) -> str:
+    """Normalize section titles for deterministic comparison."""
+    if value is None:
+        return ""
+    return " ".join(str(value).strip().lower().replace("_", " ").split())
+
+
+def _section_text_for_range(document: Document, start_idx: int, end_idx: int) -> str:
+    """Collect the text associated with a document section range."""
+    if not document or not document.blocks:
+        return ""
+
+    start_idx = max(0, int(start_idx))
+    end_idx = min(len(document.blocks) - 1, int(end_idx))
+    if end_idx < start_idx:
+        return ""
+
+    parts: list[str] = []
+    for idx in range(start_idx, end_idx + 1):
+        block = document.blocks[idx]
+        if isinstance(block, ParagraphBlock):
+            if block.text:
+                parts.append(block.text)
+        elif isinstance(block, TableBlock):
+            cell_text = [cell for row in block.rows for cell in row if cell]
+            if cell_text:
+                parts.append(" ".join(cell_text))
+
+    return " ".join(parts).lower()
+
+
+def _matches_value_in_section(section_text: str, value: str) -> bool:
+    """Return True when a value appears within a section's observed content."""
+    if not section_text or not value:
+        return False
+
+    normalized_value = _normalize_section_title(value)
+    if not normalized_value:
+        return False
+
+    if normalized_value in section_text:
+        return True
+
+    value_tokens = set(re.findall(r"[a-z0-9]+", normalized_value))
+    section_tokens = set(re.findall(r"[a-z0-9]+", section_text))
+    return bool(value_tokens) and value_tokens.issubset(section_tokens)
+
+
 def link_variable_to_sections(
     variable_name: str,
     profiles: list[DocumentProfile],
@@ -952,6 +1000,9 @@ def link_variable_to_sections(
     documents_by_id: Optional[dict[str, Document]] = None,
 ) -> list[str]:
     """Determine which sections contain a variable.
+
+    The association is based on actual occurrences within the document block ranges
+    of the relevant section boundaries. This avoids broad document-level heuristics.
 
     Args:
         variable_name: Name of the variable.
@@ -962,35 +1013,41 @@ def link_variable_to_sections(
     Returns:
         List of section names/patterns containing the variable.
     """
-    containing_sections = []
+    containing_sections: set[str] = set()
 
     if documents_by_id:
-        # When documents available, try to find sections near detected values
-        # For now, use simple heuristic: link to any section in documents with this variable
         for profile in profiles:
-            doc_id = profile.document_id
-            if doc_id not in documents_by_id:
+            document = documents_by_id.get(profile.document_id)
+            if document is None:
                 continue
 
-            document = documents_by_id[doc_id]
-            field_values = _extract_all_field_values(document)
+            observed_values = _extract_all_field_values(document).get(variable_name, [])
+            if not observed_values:
+                continue
 
-            if variable_name in field_values:
-                # Add any sections from this profile
-                for section in profile.sections:
-                    if section.title:
-                        containing_sections.append((section.title or "").lower())
-    else:
-        # Fallback to original logic
-        for section_pattern, sections_in_group in section_groups.items():
-            for profile in profiles:
-                if variable_name.lower() in profile.content.vocabulary:
-                    profile_section_titles = {
-                        (s.title or "").lower() for s in profile.sections
-                    }
-                    if any(s.title and (s.title or "").lower() for s in sections_in_group):
-                        containing_sections.append(section_pattern)
-                        break
+            for section in getattr(profile, "sections", []):
+                if not getattr(section, "title", None):
+                    continue
+                section_text = _section_text_for_range(
+                    document,
+                    getattr(section, "start_block_idx", 0),
+                    getattr(section, "end_block_idx", 0),
+                )
+                if not section_text:
+                    continue
+                if any(_matches_value_in_section(section_text, value) for value in observed_values):
+                    containing_sections.add(_normalize_section_title(section.title))
 
-    # Deduplicate and sort for determinism
-    return sorted(list(set(containing_sections)))
+        return sorted(containing_sections)
+
+    # Conservative fallback: only link when the variable is explicitly part of the section title.
+    for profile in profiles:
+        for section in getattr(profile, "sections", []):
+            title = getattr(section, "title", None)
+            if not title:
+                continue
+            normalized_title = _normalize_section_title(title)
+            if normalized_title and variable_name.lower() in normalized_title:
+                containing_sections.add(normalized_title)
+
+    return sorted(containing_sections)

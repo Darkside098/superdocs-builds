@@ -337,6 +337,22 @@ class TemplateInferer:
 
         result.variables = inferred_variables
 
+        # Populate per-section variable membership from actual section-context associations.
+        section_lookup = {
+            " ".join(str(section.title_or_pattern).strip().lower().replace("_", " ").split()): section
+            for section in result.sections
+        }
+        for variable in inferred_variables:
+            if not variable.section_context or variable.section_context == "unknown":
+                continue
+            normalized_context = " ".join(
+                str(variable.section_context).strip().lower().replace("_", " ").split()
+            )
+            section = section_lookup.get(normalized_context)
+            if section is None:
+                continue
+            section.variables = sorted(set(section.variables + [variable.variable_name]))
+
         # 5. Build per-document variable values for conditional inference
         per_doc_variable_values = {}  # {doc_id: {var_name: [values]}}
         if family_documents:
