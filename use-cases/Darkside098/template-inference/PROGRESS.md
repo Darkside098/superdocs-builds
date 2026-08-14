@@ -67,9 +67,9 @@ SuperDocs Template Inference
 
 ## Current Milestone
 
-**Task 2 — Template Inference System — Finalization**
+**Task 2 — Template Inference System — Final Validation and Documentation**
 
-Milestones 1–3 and the downstream family clustering and template inference stages have been implemented and validated.
+Milestones 1–3, downstream family clustering, template inference, DOCX regeneration, formatting preservation, and fidelity comparison have been implemented and validated. The current branch is in final documentation and validation review without further code changes.
 
 ---
 
@@ -164,6 +164,44 @@ Milestones 1–3 and the downstream family clustering and template inference sta
 
 ---
 
+### DOCX Regeneration
+
+**Status: COMPLETE**
+
+- [x] Dedicated regeneration component
+- [x] Source-specific variable substitution
+- [x] Required section generation
+- [x] Conditional true/false branch handling
+- [x] Section ordering
+- [x] Explicit handling of missing variable values
+- [x] Explicit handling of insufficient template information
+- [x] Benchmark DOCX integration coverage
+
+---
+
+### Formatting Preservation and Fidelity
+
+**Status: COMPLETE**
+
+- [x] Detectable paragraph formatting preservation
+- [x] Heading style/level preservation
+- [x] Bold/italic/underline where available
+- [x] Font name and size where available
+- [x] Alignment
+- [x] Spacing and indentation where available
+- [x] Conservative formatting application during regeneration
+- [x] Structured fidelity comparison
+- [x] Explicit unsupported/unknown formatting reporting
+- [x] Regression coverage
+
+> Formatting fidelity is limited to information available through the normalized document representation and supported python-docx metadata. Unsupported deep Word formatting is reported as unsupported/unknown rather than fabricated.
+>
+> PDF loader is not currently implemented in this branch.
+>
+> No template-inference API endpoint is currently implemented in this branch.
+
+---
+
 ## Regression Fixes Completed
 
 ### M7 Semantic Section Detection
@@ -200,4 +238,17 @@ Milestones 1–3 and the downstream family clustering and template inference sta
 ### Full Test Suite
 
 ```text
-295 passed
+304 passed
+```
+
+- [x] `python -m pytest -q`
+- [x] `git diff --check`
+- [x] Benchmark and integration tests covered by the suite
+- [x] Regeneration-specific regression tests included in validation
+
+### Limitations and Scope
+
+- [x] Formatting fidelity is limited to metadata available through the normalized document representation and supported python-docx fields.
+- [x] Unsupported deep Word formatting is reported as unsupported/unknown instead of fabricated.
+- [x] PDF loader is not currently implemented.
+- [x] No template-inference API endpoint is currently implemented in this branch.
