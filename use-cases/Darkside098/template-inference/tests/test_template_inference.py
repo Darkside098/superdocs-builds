@@ -722,6 +722,139 @@ class TestConditionalInference:
         assert len(payload["evidence"]) == 1
         assert payload["target_section"] == "Remote Work Setup"
 
+    def test_singleton_identifier_rejection(self):
+        """Singleton values (appearing in only one document) must not become section conditions.
+
+        This test directly tests _find_best_variable_condition to verify that
+        document-specific identifiers like employee_id are rejected when they occur
+        in only a single document.
+        """
+        from superdocs_template_inference.template_inference.conditionals import (
+            _find_best_variable_condition,
+        )
+
+        # Create profiles representing doc_001 with section, doc_002 and doc_003 without
+        profiles_with_section = [
+            create_test_profile("doc_001", "doc_001.docx"),
+        ]
+        profiles_without_section = [
+            create_test_profile("doc_002", "doc_002.docx"),
+            create_test_profile("doc_003", "doc_003.docx"),
+        ]
+
+        # Simulate variable_values where each document has a unique employee_id
+        # This represents the false-positive case: employee_id is unique per document
+        # and employee_id == BFT-10234 perfectly correlates with the section in doc_001
+        # but should NOT be accepted as a reusable template condition
+        variable_values = {
+            "doc_001": {"employee_id": ["BFT-10234"]},
+            "doc_002": {"employee_id": ["BFT-10235"]},
+            "doc_003": {"employee_id": ["BFT-10236"]},
+        }
+
+        condition = _find_best_variable_condition(
+            profiles_with_section,
+            profiles_without_section,
+            variable_values,
+        )
+
+        # The condition should be None because employee_id values are singleton identifiers
+        # appearing in only one document each
+        assert condition is None, (
+            "Singleton identifier values like employee_id should not be accepted as "
+            "section conditions. Got: " + str(condition)
+        )
+
+    def test_repeated_categorical_value_accepted(self):
+        """Repeated categorical values across documents can become valid conditions.
+
+        When the same categorical value appears in multiple documents and correlates
+        with section presence, it can be selected as a valid reusable condition.
+        This test directly tests _find_best_variable_condition with work_mode=Remote
+        appearing in multiple documents with the section.
+        """
+        from superdocs_template_inference.template_inference.conditionals import (
+            _find_best_variable_condition,
+        )
+
+        # Create profiles:
+        # - doc_001 and doc_002: have the section, work_mode=Remote
+        # - doc_003 and doc_004: don't have section, work_mode=Office
+        profiles_with_section = [
+            create_test_profile("doc_001", "doc_001.docx"),
+            create_test_profile("doc_002", "doc_002.docx"),
+        ]
+        profiles_without_section = [
+            create_test_profile("doc_003", "doc_003.docx"),
+            create_test_profile("doc_004", "doc_004.docx"),
+        ]
+
+        # work_mode=Remote appears in both profiles with the section (repeated)
+        # work_mode=Office appears in both profiles without the section
+        variable_values = {
+            "doc_001": {"work_mode": ["Remote"]},
+            "doc_002": {"work_mode": ["Remote"]},
+            "doc_003": {"work_mode": ["Office"]},
+            "doc_004": {"work_mode": ["Office"]},
+        }
+
+        condition = _find_best_variable_condition(
+            profiles_with_section,
+            profiles_without_section,
+            variable_values,
+        )
+
+        # The condition should be accepted because work_mode=Remote appears in
+        # multiple documents (2 distinct docs) and perfectly predicts section presence
+        assert condition is not None, (
+            "Repeated categorical values should be accepted as conditions"
+        )
+        assert condition[0] == "work_mode", f"Expected variable='work_mode', got={condition[0]}"
+        assert condition[1] == "equals", f"Expected operator='equals', got={condition[1]}"
+        assert condition[2] == "Remote", f"Expected value='Remote', got={condition[2]}"
+
+    def test_repeated_department_value_accepted(self):
+        """Department values appearing in multiple documents can become conditions.
+
+        Similar to work_mode, categorical variables like department that appear
+        in multiple documents and predict section presence can be accepted.
+        """
+        from superdocs_template_inference.template_inference.conditionals import (
+            _find_best_variable_condition,
+        )
+
+        # Create profiles:
+        # - doc_001 and doc_002: have section, department=Engineering
+        # - doc_003 and doc_004: no section, department=Marketing
+        profiles_with_section = [
+            create_test_profile("doc_001", "doc_001.docx"),
+            create_test_profile("doc_002", "doc_002.docx"),
+        ]
+        profiles_without_section = [
+            create_test_profile("doc_003", "doc_003.docx"),
+            create_test_profile("doc_004", "doc_004.docx"),
+        ]
+
+        variable_values = {
+            "doc_001": {"department": ["Engineering"]},
+            "doc_002": {"department": ["Engineering"]},
+            "doc_003": {"department": ["Marketing"]},
+            "doc_004": {"department": ["Marketing"]},
+        }
+
+        condition = _find_best_variable_condition(
+            profiles_with_section,
+            profiles_without_section,
+            variable_values,
+        )
+
+        # Should accept Engineering because it appears in multiple docs and predicts section
+        assert condition is not None, (
+            "Repeated department values should be accepted as conditions"
+        )
+        assert condition[0] == "department"
+        assert condition[2] == "Engineering"
+
 
 class TestDeterminism:
     """Tests for deterministic inference."""

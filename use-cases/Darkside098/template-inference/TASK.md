@@ -1238,3 +1238,117 @@ Milestone 3 is complete only when:
 - [ ] Benchmark corpus remains unchanged
 - [ ] `.env` remains ignored
 - [ ] `.venv` remains ignored
+
+
+---
+
+## Task 2 — Implementation Status
+
+### Milestone 1 — Application Foundation and DOCX Ingestion
+
+**Status: COMPLETE**
+
+Implemented and verified:
+
+- Modular application package structure
+- Configuration management
+- Normalized document representation
+- Document ingestion abstraction
+- DOCX loading
+- Paragraph, table, heading, list, and structural extraction
+- Focused unit and integration tests
+
+---
+
+### Milestone 2 — Document Profiling
+
+**Status: COMPLETE**
+
+Implemented and verified:
+
+- DocumentProfile model
+- Structural profiling
+- Content profiling
+- Formatting profiling
+- Generic section-boundary detection
+- Profile serialization
+- Profiling unit and integration tests
+
+The profiling layer remains independent of benchmark ground truth and family labels.
+
+---
+
+### Milestone 3 — Family Compatibility
+
+**Status: COMPLETE**
+
+Implemented and verified:
+
+- Compatibility result model
+- Structural compatibility
+- Section compatibility
+- Heading compatibility
+- Content/vocabulary compatibility
+- Table compatibility
+- Document-length compatibility
+- Combined normalized compatibility score
+- Evidence generation
+- Confidence calculation
+- Deterministic comparison
+- Symmetric comparison
+- Unit and integration tests
+
+---
+
+### Family Clustering
+
+**Status: COMPLETE**
+
+Implemented and verified:
+
+- Pairwise compatibility-based family clustering
+- Mixed-family document handling
+- Family membership generation
+- Family confidence reporting
+
+The benchmark corpus correctly separates into the two expected document families during evaluation.
+
+---
+
+### Template Inference
+
+**Status: IMPLEMENTED**
+
+The template inference pipeline currently includes:
+
+- Semantic section detection
+- Document-aware section detection
+- Section deduplication
+- Section ordering
+- Required/optional section classification
+- Variable detection
+- Semantic variable mapping
+- Variable type inference
+- Conditional section detection
+- Conditional rule inference
+- Conditional section variant handling
+- Evaluation/scoring infrastructure
+
+The implementation has undergone multiple regression fixes covering:
+
+- semantic section deduplication
+- required-section classification
+- canonical semantic-title normalization
+- variable-field evaluation extraction
+- conditional section-group matching
+- singleton identifier rejection
+- conditional condition normalization
+
+---
+
+### Validation
+
+Current regression test status:
+
+```text
+295 passed

@@ -67,20 +67,17 @@ SuperDocs Template Inference
 
 ## Current Milestone
 
-**Milestone 1 — Application Foundation and DOCX Document Ingestion**
+**Task 2 — Template Inference System — Finalization**
 
-### Specification Status
-
-- [x] Overall architecture defined
-- [x] Inference output contract defined
-- [x] Milestone 1 scope defined
-- [x] Benchmark corpus committed
-- [x] Ground-truth separation defined
-- [x] Milestone 1 completion criteria defined
+Milestones 1–3 and the downstream family clustering and template inference stages have been implemented and validated.
 
 ---
 
-### Implementation Status
+## Milestone Status
+
+### Milestone 1 — Application Foundation and DOCX Ingestion
+
+**Status: COMPLETE**
 
 - [x] Application package structure
 - [x] Configuration management
@@ -89,113 +86,118 @@ SuperDocs Template Inference
 - [x] DOCX loader
 - [x] Basic structural extraction
 - [x] Unit tests
-- [x] Benchmark DOCX integration test
+- [x] Benchmark DOCX integration tests
 
 ---
 
-## Copilot Status
+### Milestone 2 — Document Profiling
 
-Milestone 1 implementation completed and verified with Copilot.
+**Status: COMPLETE**
 
-Copilot was instructed to:
+- [x] DocumentProfile model
+- [x] Structural profiling
+- [x] Content profiling
+- [x] Formatting signals
+- [x] Generic section-boundary detection
+- [x] Profile serialization
+- [x] Profiling unit tests
+- [x] Benchmark integration tests
 
-- read `TASK.md` before implementation
-- read `PROGRESS.md` before implementation
-- implement only Milestone 1
-- avoid implementing future milestones
-- report files created or modified
-- run relevant tests
-- report test results
+---
 
-Milestone 1 implementation was independently verified with:
+### Milestone 3 — Family Compatibility
+
+**Status: COMPLETE**
+
+- [x] Compatibility result model
+- [x] Compatibility scorer
+- [x] Structural compatibility
+- [x] Section compatibility
+- [x] Heading compatibility
+- [x] Content/vocabulary compatibility
+- [x] Table compatibility
+- [x] Document-length compatibility
+- [x] Combined normalized score
+- [x] Evidence generation
+- [x] Confidence calculation
+- [x] Deterministic scoring
+- [x] Symmetric comparison
+- [x] Unit tests
+- [x] Integration tests
+
+---
+
+### Family Clustering
+
+**Status: COMPLETE**
+
+- [x] Pairwise compatibility used for family grouping
+- [x] Mixed-family corpus handling
+- [x] Family membership generation
+- [x] Family confidence reporting
+- [x] Benchmark evaluation confirms two document families
+
+---
+
+### Template Inference
+
+**Status: IMPLEMENTED AND VALIDATED**
+
+- [x] Semantic section detection
+- [x] Document-aware section detection
+- [x] Section boundary handling
+- [x] Section deduplication
+- [x] Semantic title normalization
+- [x] Section ordering
+- [x] Required/optional classification
+- [x] Variable detection
+- [x] Semantic variable mapping
+- [x] Variable type inference
+- [x] Conditional section detection
+- [x] Conditional rule inference
+- [x] Conditional section-group matching
+- [x] Conditional section variant handling
+- [x] Singleton identifier rejection
+- [x] Evaluation-side variable extraction
+- [x] Conditional condition normalization
+- [x] Evaluation/scoring infrastructure
+
+---
+
+## Regression Fixes Completed
+
+### M7 Semantic Section Detection
+
+- [x] Document-aware heading detection
+- [x] Semantic section anchoring
+- [x] Section boundary construction
+- [x] Section deduplication
+- [x] Duplicate semantic-title prevention
+- [x] Section-order deduplication
+
+### Variable Detection
+
+- [x] Structured field extraction
+- [x] Table key-value extraction
+- [x] Paragraph label-value extraction
+- [x] Semantic field mapping
+- [x] Type inference
+- [x] Evaluation VariableField serialization fix
+
+### Conditional Inference
+
+- [x] Section-group aware matching
+- [x] Condition normalization
+- [x] Operator normalization
+- [x] Singleton identifier rejection
+- [x] Repeated categorical value acceptance
+- [x] Conditional section variant handling
+
+---
+
+## Validation
+
+### Full Test Suite
 
 ```text
-32 passed in 2.68s
----
-
-## Important Rules
-
-- Ground-truth JSON is evaluation-only.
-- Ground truth must never be passed to the inference pipeline.
-- Do not hard-code benchmark answers.
-- Do not rely primarily on filenames for family detection.
-- `.env` must never be committed.
-- `.venv` must never be committed.
-- Preserve modular architecture.
-- Test each stage before moving to the next stage.
-- Do not modify benchmark corpus documents during implementation.
-- Keep inference logic separate from document ingestion.
-- Do not implement future milestones prematurely.
-- Do not expose API keys or other secrets in source code.
-
----
-
-## Milestone 1 — Completion
-
-The following Milestone 1 tasks have been completed and verified:
-
-1. [x] Create application package structure
-2. [x] Define configuration model
-3. [x] Define normalized document representation
-4. [x] Create document ingestion abstraction
-5. [x] Implement DOCX loader
-6. [x] Implement basic structural extraction
-7. [x] Add focused unit tests
-8. [x] Add integration tests using real benchmark DOCX documents
-9. [x] Run the Milestone 1 test suite
-10. [x] Review implementation against `TASK.md`
-11. [x] Verify benchmark corpus remains unchanged
-12. [x] Verify ground truth is isolated from ingestion
-
----
-
-## Milestone 1 — Out of Scope
-
-The following must NOT be implemented during Milestone 1:
-
-- document family detection
-- family compatibility scoring
-- document clustering
-- template inference
-- variable detection
-- conditional-section inference
-- LLM calls
-- embedding generation
-- vector databases
-- evaluation against ground truth
-- API endpoints
-- frontend/UI
-- PDF loader
-
-These will be handled in later milestones.
-
----
-
-## Development History
-
-### Commit 1
-
-`f89074a` — `Initialize template inference task`
-
-Created the initial Task 2 project configuration, documentation, environment files, requirements, and API connectivity test.
-
-### Commit 2
-
-`3f52596` — `Add template inference benchmark corpus`
-
-Added the 48 benchmark documents and 2 evaluation-only ground-truth files.
-
----
-
-## Current State
-
-Milestone 1 — Application Foundation and DOCX Document Ingestion is complete.
-
-The implementation has been tested against real benchmark documents and the full test suite passes.
-
-**Test result:**
-
-```text
-32 passed in 2.68s
-
-**Milestone 1 Status: COMPLETE**
+295 passed

@@ -1,8 +1,11 @@
-"""Variable detection and semantic role inference."""
+"""Variable detection and semantic role inference with document-aware extraction."""
 
 import re
 from collections import Counter
-from superdocs_template_inference.models import DocumentProfile
+from typing import Optional
+
+from superdocs_template_inference.models import DocumentProfile, Document
+from superdocs_template_inference.models.document import ParagraphBlock, TableBlock
 
 _COMMON_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has", "have",
@@ -36,6 +39,128 @@ _FIELD_CONTEXT_HINTS = {
     "status", "contract", "period", "approval", "benefits"
 }
 
+# Semantic field name mapping: canonical variable names for different contexts
+_SEMANTIC_FIELD_MAPPING = {
+    # Common field labels -> canonical variable names (multi-value for context-dependent mapping)
+    "name": {
+        "offer": "candidate_name",
+        "onboarding": "employee_name",
+        "default": "name"
+    },
+    "candidate name": "candidate_name",
+    "candidate_name": "candidate_name",
+    "employee name": "employee_name",
+    "employee_name": "employee_name",
+    "employee id": "employee_id",
+    "emp id": "employee_id",
+    "id": "employee_id",
+    "email": "candidate_email",
+    "candidate email": "candidate_email",
+    "candidate_email": "candidate_email",
+    "employee email": "employee_email",
+    "email address": "candidate_email",
+    "phone": "candidate_phone",
+    "candidate phone": "candidate_phone",
+    "phone number": "candidate_phone",
+    "mobile": "candidate_phone",
+    "telephone": "candidate_phone",
+    "address": "candidate_address",
+    "candidate address": "candidate_address",
+    "job title": "job_title",
+    "position": "job_title",
+    "designation": "job_title",
+    "role": "job_title",
+    "department": "department",
+    "team": "department",
+    "division": "department",
+    "level": "employee_level",
+    "employee level": "employee_level",
+    "grade": "employee_level",
+    "manager": {
+        "offer": "reporting_manager",
+        "onboarding": "manager_name",
+        "default": "manager_name"
+    },
+    "reporting manager": "reporting_manager",
+    "supervisor": "reporting_manager",
+    "manager name": "manager_name",
+    "manager title": "manager_title",
+    "manager_title": "manager_title",
+    "start date": "joining_date",
+    "joining date": "joining_date",
+    "commencement date": "joining_date",
+    "employment type": "employment_type",
+    "employment_type": "employment_type",
+    "type of employment": "employment_type",
+    "work location": "work_location",
+    "location": "work_location",
+    "office": "work_location",
+    "work mode": "work_mode",
+    "mode": "work_mode",
+    "work mode / location": "work_mode",
+    "relocation": "relocation_required",
+    "relocation required": "relocation_required",
+    "date": {
+        "offer": "offer_date",
+        "onboarding": "letter_date",
+        "default": "letter_date"
+    },
+    "offer date": "offer_date",
+    "offer_date": "offer_date",
+    "letter date": "letter_date",
+    "letter_date": "letter_date",
+    "offer expiry date": "offer_expiry_date",
+    "expiry date": "offer_expiry_date",
+    "offer expiry": "offer_expiry_date",
+    "reference": "offer_reference",
+    "offer reference": "offer_reference",
+    "annual ctc": "annual_ctc",
+    "ctc": "annual_ctc",
+    "annual salary": "annual_ctc",
+    "monthly salary": "monthly_salary",
+    "salary": {
+        "offer": "annual_ctc",
+        "onboarding": "monthly_salary",
+        "default": "monthly_salary"
+    },
+    "probation": "probation_period",
+    "probation period": "probation_period",
+    "probation_period": "probation_period",
+    "hr representative": "hr_representative",
+    "hr_representative": "hr_representative",
+    "hr contact": "hr_representative",
+    "hr_contact": "hr_representative",
+    "hr title": "hr_title",
+    "hr_title": "hr_title",
+    "pto": "pto_days",
+    "pto days": "pto_days",
+    "pto_days": "pto_days",
+    "leave": "pto_days",
+    "first day": "first_day_time",
+    "first day time": "first_day_time",
+    "first_day_time": "first_day_time",
+    "arrival": "first_day_time",
+    "arrival time": "first_day_time",
+    "start time": "first_day_time",
+    "orientation date": "orientation_date",
+    "orientation_date": "orientation_date",
+    "orientation time": "orientation_time",
+    "orientation_time": "orientation_time",
+    "orientation location": "orientation_location",
+    "orientation_location": "orientation_location",
+    "training program": "training_program",
+    "training_program": "training_program",
+    "training": "training_program",
+    "hr contact name": "hr_contact_name",
+    "hr_contact_name": "hr_contact_name",
+    "hr contact email": "hr_contact_email",
+    "hr_contact_email": "hr_contact_email",
+    "special equipment": "special_equipment_required",
+    "special equipment required": "special_equipment_required",
+    "equipment": "equipment",
+    "equipment_required": "special_equipment_required",
+}
+
 _VALUE_LIKE_PATTERNS = (
     re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
     re.compile(r"\b\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}\b"),
@@ -52,6 +177,264 @@ def _normalize_token(value: str) -> str:
     token = str(value).strip().lower()
     token = re.sub(r"^[^a-z0-9]+|[^a-z0-9]+$", "", token)
     return token
+
+
+def _normalize_field_label(label: str) -> str:
+    """Normalize field label for matching (lowercase, strip punctuation)."""
+    if not label:
+        return ""
+    normalized = label.strip().lower()
+    # Remove trailing colons, asterisks, etc.
+    normalized = re.sub(r"[:\*\s]+$", "", normalized)
+    return normalized
+
+
+def _infer_document_context(profiles: list[DocumentProfile], documents_by_id: dict[str, Document] = None) -> str:
+    """Infer document type context (offer or onboarding) from profiles and documents.
+
+    Returns "offer", "onboarding", or None if uncertain.
+    """
+    if not profiles:
+        return None
+
+    # Strategy 1: Check actual documents for distinguishing variables
+    if documents_by_id:
+        offer_indicators = 0
+        onboarding_indicators = 0
+
+        for doc in list(documents_by_id.values())[:3]:  # Sample first 3 docs
+            if not isinstance(doc, Document):
+                continue
+            # Check for distinguishing content
+            text_content = []
+            for block in doc.blocks:
+                if isinstance(block, ParagraphBlock):
+                    text_content.append(block.text.lower())
+
+            full_text = " ".join(text_content)
+
+            # Offer-specific patterns
+            if any(word in full_text for word in ["offer letter", "salary", "annual ctc", "offer reference", "ctc"]):
+                offer_indicators += 1
+            if any(word in full_text for word in ["offer expiry", "acceptance of this offer"]):
+                offer_indicators += 2
+
+            # Onboarding-specific patterns
+            if any(word in full_text for word in ["onboarding letter", "welcome", "first day", "orientation", "employee id"]):
+                onboarding_indicators += 1
+            if any(word in full_text for word in ["welcome to", "employee onboarding", "your first day"]):
+                onboarding_indicators += 2
+
+        if offer_indicators > onboarding_indicators:
+            return "offer"
+        if onboarding_indicators > offer_indicators:
+            return "onboarding"
+
+    # Strategy 2: Check heading texts in profiles (fallback)
+    all_headings = []
+    for profile in profiles:
+        if hasattr(profile, 'content') and hasattr(profile.content, 'heading_texts'):
+            all_headings.extend(profile.content.heading_texts)
+
+    heading_text = " ".join(all_headings).lower()
+
+    if any(word in heading_text for word in ["employment offer", "offer letter", "salary"]):
+        return "offer"
+    if any(word in heading_text for word in ["onboarding", "welcome", "orientation", "employee id"]):
+        return "onboarding"
+
+    # Strategy 3: Check section titles
+    all_sections = set()
+    for profile in profiles:
+        if hasattr(profile, 'sections'):
+            for section in profile.sections:
+                if hasattr(section, 'title') and section.title:
+                    all_sections.add(section.title.lower())
+
+    section_text = " ".join(all_sections).lower()
+    offer_section_count = sum(1 for word in ["position", "compensation", "ctc", "salary", "offer"] if word in section_text)
+    onboard_section_count = sum(1 for word in ["orientation", "equipment", "first day", "onboarding"] if word in section_text)
+
+    if offer_section_count > onboard_section_count:
+        return "offer"
+    if onboard_section_count > offer_section_count:
+        return "onboarding"
+
+    # Default fallback - check if there are any section texts that might help
+    all_section_texts = []
+    for profile in profiles:
+        if hasattr(profile, 'content') and hasattr(profile.content, 'section_texts'):
+            all_section_texts.extend(profile.content.section_texts)
+
+    if all_section_texts:
+        section_content = " ".join(all_section_texts).lower()
+        if "offer" in section_content or "salary" in section_content or "compensation" in section_content:
+            return "offer"
+        if "onboarding" in section_content or "orientation" in section_content or "welcome" in section_content:
+            return "onboarding"
+
+    # Last resort: if almost empty, return None
+    return None
+
+
+
+def _map_field_label_to_variable(label: str, document_context: Optional[str] = None) -> Optional[str]:
+    """Map a field label to canonical variable name using semantic mapping.
+
+    Args:
+        label: Field label from document (e.g., "Employee Name", "Job Title")
+        document_context: Context hint ("offer" or "onboarding" if known)
+
+    Returns:
+        Canonical variable name or None if no mapping found
+    """
+    if not label:
+        return None
+
+    normalized_label = _normalize_field_label(label)
+
+    # Direct lookup
+    if normalized_label in _SEMANTIC_FIELD_MAPPING:
+        mapping = _SEMANTIC_FIELD_MAPPING[normalized_label]
+        # Handle context-dependent mappings
+        if isinstance(mapping, dict):
+            # Use document context if available, fallback to default
+            if document_context and document_context in mapping:
+                return mapping[document_context]
+            return mapping.get("default")
+        return mapping
+
+    # Fuzzy matching for slight variations
+    for key, value in _SEMANTIC_FIELD_MAPPING.items():
+        if isinstance(value, dict):
+            continue  # Skip context-dependent ones for now
+        # Check if label contains or is contained by key
+        if key in normalized_label or normalized_label in key:
+            if len(normalized_label) >= 3:  # Avoid matching too short labels
+                return value
+
+    return None
+
+
+def _extract_table_field_values(document: Document) -> dict[str, list[str]]:
+    """Extract field:value pairs from tables in document.
+
+    Returns dict mapping field_label -> [values]
+    """
+    field_values: dict[str, list[str]] = {}
+
+    for block in document.blocks:
+        if not isinstance(block, TableBlock):
+            continue
+
+        # Two-column table: first column is labels, second is values
+        if block.num_cols == 2 and block.num_rows > 0:
+            for row in block.rows:
+                if len(row) >= 2:
+                    label = row[0].strip()
+                    value = row[1].strip()
+                    if label and value:
+                        canonical_var = _map_field_label_to_variable(label, None)
+                        if canonical_var:
+                            if canonical_var not in field_values:
+                                field_values[canonical_var] = []
+                            field_values[canonical_var].append(value)
+
+        # Multi-column table: look for header row + data rows
+        elif block.num_cols >= 2 and block.num_rows > 1:
+            # Assume first row is headers
+            headers = [h.strip().lower() for h in block.rows[0]]
+
+            # Map headers to canonical variables
+            col_to_var = {}
+            for col_idx, header in enumerate(headers):
+                canonical_var = _map_field_label_to_variable(header, None)
+                if canonical_var:
+                    col_to_var[col_idx] = canonical_var
+
+            # Extract values from data rows
+            for row in block.rows[1:]:
+                for col_idx, var_name in col_to_var.items():
+                    if col_idx < len(row):
+                        value = row[col_idx].strip()
+                        if value:
+                            if var_name not in field_values:
+                                field_values[var_name] = []
+                            field_values[var_name].append(value)
+
+    return field_values
+
+
+def _extract_paragraph_field_values(document: Document) -> dict[str, list[str]]:
+    """Extract field:value pairs from label:value paragraphs.
+
+    Patterns:
+        Field Label: value
+        Field Label: value1, value2
+        Field Label: value (multiline continuation)
+
+    Returns dict mapping field_label -> [values]
+    """
+    field_values: dict[str, list[str]] = {}
+
+    for block in document.blocks:
+        if not isinstance(block, ParagraphBlock):
+            continue
+
+        text = block.text.strip()
+        if not text or len(text) < 5:
+            continue
+
+        # Pattern: "Label: Value" or "Label:Value"
+        match = re.match(r"^([^:]+):\s*(.+)$", text)
+        if match:
+            label = match.group(1).strip()
+            value = match.group(2).strip()
+
+            # Ignore if too short or too long (likely not a field)
+            if len(label) < 2 or len(label) > 50:
+                continue
+
+            # Skip if label is mostly uppercase (likely a heading/title)
+            if label.isupper() and len(label) > 3:
+                continue
+
+            # Map to canonical variable
+            canonical_var = _map_field_label_to_variable(label, None)
+            if canonical_var and value:
+                if canonical_var not in field_values:
+                    field_values[canonical_var] = []
+                field_values[canonical_var].append(value)
+
+    return field_values
+
+
+def _extract_all_field_values(document: Document) -> dict[str, list[str]]:
+    """Extract all field:value pairs from document combining all sources.
+
+    Returns dict mapping canonical_variable_name -> [values]
+    """
+    all_values: dict[str, list[str]] = {}
+
+    # Extract from tables
+    table_values = _extract_table_field_values(document)
+    for var_name, values in table_values.items():
+        if var_name not in all_values:
+            all_values[var_name] = []
+        all_values[var_name].extend(values)
+
+    # Extract from paragraphs
+    para_values = _extract_paragraph_field_values(document)
+    for var_name, values in para_values.items():
+        if var_name not in all_values:
+            all_values[var_name] = []
+        all_values[var_name].extend(values)
+
+    # Deduplicate and sort within each variable
+    for var_name in all_values:
+        all_values[var_name] = sorted(list(set(all_values[var_name])))
+
+    return all_values
 
 
 def _token_in_context(token: str, context_text: str) -> bool:
@@ -136,15 +519,92 @@ def _candidate_evidence_for_profile(profile: DocumentProfile, token: str) -> lis
     return evidence
 
 
-def detect_variables(profiles: list[DocumentProfile]) -> dict[str, dict]:
-    """Detect contextual semantic candidates from profile evidence.
+def detect_variables(
+    profiles: list[DocumentProfile],
+    documents_by_id: Optional[dict[str, Document]] = None,
+) -> dict[str, dict]:
+    """Detect semantic variables using document-aware field extraction.
 
-    A candidate must have strong field-like evidence from section/heading context or
-    actual value patterns. Ordinary vocabulary words and generic nouns are rejected.
+    When documents are available, extracts actual field labels and values from:
+    - Tables (key-value format)
+    - Paragraphs (label: value format)
+
+    Falls back to vocabulary-based detection when documents unavailable.
+
+    Args:
+        profiles: List of DocumentProfile objects
+        documents_by_id: Optional dict mapping document_id -> Document with raw blocks
+
+    Returns:
+        Dict mapping {variable_name: {section, values, frequency, confidence, evidence}}
     """
     if len(profiles) < 2:
         return {}
 
+    # Use document-aware extraction if documents available
+    if documents_by_id:
+        detected_variables: dict[str, set[str]] = {}  # var_name -> set of observed values
+
+        for profile in profiles:
+            doc_id = profile.document_id
+            if doc_id not in documents_by_id:
+                continue
+
+            document = documents_by_id[doc_id]
+            field_values = _extract_all_field_values(document)
+
+            # Record all detected field values
+            for var_name, values in field_values.items():
+                if var_name not in detected_variables:
+                    detected_variables[var_name] = set()
+                detected_variables[var_name].update(values)
+
+        # Build candidate scores from detected variables
+        candidate_scores: dict[str, dict] = {}
+
+        for var_name in sorted(detected_variables.keys()):
+            values = sorted(list(detected_variables[var_name]))
+
+            # Count how many documents have this variable
+            doc_count = 0
+            for profile in profiles:
+                doc_id = profile.document_id
+                if doc_id not in documents_by_id:
+                    continue
+                document = documents_by_id[doc_id]
+                field_values = _extract_all_field_values(document)
+                if var_name in field_values:
+                    doc_count += 1
+
+            frequency = doc_count / len(profiles) if len(profiles) > 0 else 0.0
+
+            # High confidence for detected semantic fields
+            confidence = 0.9
+
+            candidate_scores[var_name] = {
+                "section": "field_detection",
+                "values": set(values),
+                "frequency": frequency,
+                "confidence": confidence,
+                "evidence": {"document_field_extraction"},
+            }
+
+        # Filter: keep variables present in 2+ documents with reasonable frequency
+        filtered_candidates: dict[str, dict] = {}
+        for name, info in sorted(candidate_scores.items()):
+            # For now, keep if in at least 1 document (conservative filter)
+            if info["frequency"] >= (1.0 / len(profiles)) if len(profiles) > 0 else True:
+                filtered_candidates[name] = {
+                    "section": info["section"],
+                    "values": sorted(info["values"]),
+                    "frequency": round(info["frequency"], 3),
+                    "confidence": round(info["confidence"], 3),
+                    "evidence": sorted(list(info["evidence"])),
+                }
+
+        return filtered_candidates
+
+    # Fallback: vocabulary-based detection (original behavior)
     candidate_scores: dict[str, dict] = {}
 
     for profile in profiles:
@@ -270,13 +730,19 @@ def infer_semantic_role(variable_name: str, context_words: list[str]) -> str:
 
 
 def calculate_variable_frequency(
-    variable_name: str, profiles: list[DocumentProfile]
+    variable_name: str,
+    profiles: list[DocumentProfile],
+    documents_by_id: Optional[dict[str, Document]] = None,
 ) -> float:
     """Calculate how frequently a variable appears across documents.
 
+    When documents available, counts presence of actual detected field values.
+    Otherwise, checks vocabulary presence.
+
     Args:
-        variable_name: The variable name or key value.
+        variable_name: The variable name.
         profiles: List of DocumentProfile objects from a single family.
+        documents_by_id: Optional dict mapping document_id -> Document
 
     Returns:
         Frequency as 0.0–1.0.
@@ -284,8 +750,24 @@ def calculate_variable_frequency(
     if not profiles:
         return 0.0
 
-    count = 0
+    if documents_by_id:
+        # Count documents where this variable was detected
+        count = 0
+        for profile in profiles:
+            doc_id = profile.document_id
+            if doc_id not in documents_by_id:
+                continue
 
+            document = documents_by_id[doc_id]
+            field_values = _extract_all_field_values(document)
+
+            if variable_name in field_values:
+                count += 1
+
+        return count / len(profiles)
+
+    # Fallback to vocabulary check
+    count = 0
     for profile in profiles:
         if variable_name.lower() in profile.content.vocabulary:
             count += 1
@@ -293,30 +775,52 @@ def calculate_variable_frequency(
     return count / len(profiles)
 
 
-# M6 Enhancement Functions
-
-
 def extract_variable_values(
-    variable_candidates: dict[str, dict], profiles: list[DocumentProfile]
+    variable_candidates: dict[str, dict],
+    profiles: list[DocumentProfile],
+    documents_by_id: Optional[dict[str, Document]] = None,
 ) -> dict[str, list[str]]:
-    """Extract actual observed values for variable candidates from profiles.
+    """Extract actual observed values for variable candidates.
+
+    When documents available, returns actual field values extracted from tables/paragraphs.
+    Otherwise, returns vocabulary-based values.
 
     Args:
         variable_candidates: Dict mapping variable names to candidate info.
         profiles: List of DocumentProfile objects.
+        documents_by_id: Optional dict mapping document_id -> Document
 
     Returns:
         Dict mapping {variable_name: [observed values from documents]}.
     """
     variable_values: dict[str, list[str]] = {}
 
-    for var_name in variable_candidates.keys():
-        values = []
-        for profile in profiles:
-            if var_name.lower() in profile.content.vocabulary:
-                # The vocabulary key is the actual value observed
-                values.append(var_name)
-        variable_values[var_name] = sorted(list(set(values)))  # Deduplicate, sort for determinism
+    if documents_by_id:
+        # Extract actual field values from documents
+        for var_name in variable_candidates.keys():
+            all_values = set()
+
+            for profile in profiles:
+                doc_id = profile.document_id
+                if doc_id not in documents_by_id:
+                    continue
+
+                document = documents_by_id[doc_id]
+                field_values = _extract_all_field_values(document)
+
+                if var_name in field_values:
+                    all_values.update(field_values[var_name])
+
+            # Sort for determinism
+            variable_values[var_name] = sorted(list(all_values))
+    else:
+        # Fallback to vocabulary-based (original behavior)
+        for var_name in variable_candidates.keys():
+            values = []
+            for profile in profiles:
+                if var_name.lower() in profile.content.vocabulary:
+                    values.append(var_name)
+            variable_values[var_name] = sorted(list(set(values)))
 
     return variable_values
 
@@ -389,7 +893,10 @@ def infer_variable_type(values: list[str]) -> tuple[str, dict]:
 
 
 def infer_variable_metadata(
-    variable_name: str, values: list[str], profiles: list[DocumentProfile]
+    variable_name: str,
+    values: list[str],
+    profiles: list[DocumentProfile],
+    documents_by_id: Optional[dict[str, Document]] = None,
 ) -> dict:
     """Infer metadata about a variable.
 
@@ -397,30 +904,52 @@ def infer_variable_metadata(
         variable_name: Name of the variable.
         values: List of observed values.
         profiles: List of DocumentProfile objects.
+        documents_by_id: Optional dict mapping document_id -> Document
 
     Returns:
         Dict with metadata: frequency, unique_per_document, etc.
     """
-    frequency = calculate_variable_frequency(variable_name, profiles)
+    frequency = calculate_variable_frequency(variable_name, profiles, documents_by_id)
 
-    # Determine if unique per document
-    value_counts = []
-    for profile in profiles:
-        if variable_name.lower() in profile.content.vocabulary:
-            value_counts.append(1)
+    if documents_by_id:
+        # Count unique values per document to determine if unique per document
+        docs_with_values = []
+        value_counts_per_doc = {}
 
-    unique_per_document = len(value_counts) == len(set(values))
+        for profile in profiles:
+            doc_id = profile.document_id
+            if doc_id not in documents_by_id:
+                continue
+
+            document = documents_by_id[doc_id]
+            field_values = _extract_all_field_values(document)
+
+            if variable_name in field_values:
+                doc_values = field_values[variable_name]
+                docs_with_values.append(doc_id)
+                value_counts_per_doc[doc_id] = len(doc_values)
+
+        # Variable is unique_per_document if each document has exactly 1 value
+        unique_per_document = len(docs_with_values) > 0 and all(
+            count == 1 for count in value_counts_per_doc.values()
+        )
+    else:
+        # Fallback: assume unique if fewer values than documents
+        unique_per_document = len(values) <= len(profiles)
 
     return {
         "frequency": frequency,
         "unique_per_document": unique_per_document,
         "observed_value_count": len(values),
-        "observed_in_documents": len(value_counts),
+        "observed_in_documents": len(values),
     }
 
 
 def link_variable_to_sections(
-    variable_name: str, profiles: list[DocumentProfile], section_groups: dict
+    variable_name: str,
+    profiles: list[DocumentProfile],
+    section_groups: dict,
+    documents_by_id: Optional[dict[str, Document]] = None,
 ) -> list[str]:
     """Determine which sections contain a variable.
 
@@ -428,25 +957,40 @@ def link_variable_to_sections(
         variable_name: Name of the variable.
         profiles: List of DocumentProfile objects.
         section_groups: Dict of aligned sections from section detection.
+        documents_by_id: Optional dict mapping document_id -> Document
 
     Returns:
         List of section names/patterns containing the variable.
     """
     containing_sections = []
 
-    # For each section group, check if any section contains vocabulary matching variable
-    for section_pattern, sections_in_group in section_groups.items():
-        # Simplified: check if variable appears in documents that have this section
+    if documents_by_id:
+        # When documents available, try to find sections near detected values
+        # For now, use simple heuristic: link to any section in documents with this variable
         for profile in profiles:
-            if variable_name.lower() in profile.content.vocabulary:
-                # Check if this profile has any section in this group
-                profile_section_titles = {
-                    (s.title or "").lower() for s in profile.sections
-                }
-                if any(s.title and (s.title or "").lower() for s in sections_in_group):
-                    # Found variable in document with this section
-                    containing_sections.append(section_pattern)
-                    break
+            doc_id = profile.document_id
+            if doc_id not in documents_by_id:
+                continue
+
+            document = documents_by_id[doc_id]
+            field_values = _extract_all_field_values(document)
+
+            if variable_name in field_values:
+                # Add any sections from this profile
+                for section in profile.sections:
+                    if section.title:
+                        containing_sections.append((section.title or "").lower())
+    else:
+        # Fallback to original logic
+        for section_pattern, sections_in_group in section_groups.items():
+            for profile in profiles:
+                if variable_name.lower() in profile.content.vocabulary:
+                    profile_section_titles = {
+                        (s.title or "").lower() for s in profile.sections
+                    }
+                    if any(s.title and (s.title or "").lower() for s in sections_in_group):
+                        containing_sections.append(section_pattern)
+                        break
 
     # Deduplicate and sort for determinism
     return sorted(list(set(containing_sections)))
