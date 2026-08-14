@@ -10,6 +10,7 @@ from uuid import uuid4
 from docx import Document as DocxDocument
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.oxml.ns import qn
+from docx.shared import Inches, Pt
 
 from superdocs_template_inference.exceptions import DocumentLoadError
 from superdocs_template_inference.models import (
@@ -142,6 +143,52 @@ class DOCXLoader(DocumentLoader):
         list_level = self._get_list_level(paragraph) if is_list else None
         list_ordered = self._is_ordered_list(paragraph) if is_list else None
 
+        font_name = None
+        font_size = None
+        bold = None
+        italic = None
+        underline = None
+        alignment = None
+        spacing_before = None
+        spacing_after = None
+        indent_left = None
+        indent_first_line = None
+
+        runs = getattr(paragraph, "runs", None)
+        if runs is not None:
+            try:
+                runs = list(runs)
+            except TypeError:
+                runs = []
+            try:
+                filtered_runs = [run for run in runs if getattr(run, "text", "").strip()]
+            except (AttributeError, TypeError):
+                filtered_runs = []
+
+            if filtered_runs:
+                first_run = filtered_runs[0]
+                run_font = getattr(first_run, "font", None)
+                if run_font is not None:
+                    font_name = getattr(run_font, "name", None)
+                    font_size = self._coerce_font_size(getattr(run_font, "size", None))
+                    underline = self._coerce_underline(getattr(run_font, "underline", None))
+                bold = bool(getattr(first_run, "bold", None)) if getattr(first_run, "bold", None) is not None else None
+                italic = bool(getattr(first_run, "italic", None)) if getattr(first_run, "italic", None) is not None else None
+
+        alignment_value = getattr(paragraph, "alignment", None)
+        if alignment_value is not None:
+            try:
+                alignment = self._normalize_alignment(alignment_value)
+            except Exception:
+                alignment = None
+
+        format_props = getattr(paragraph, "paragraph_format", None)
+        if format_props is not None:
+            spacing_before = self._coerce_length(getattr(format_props, "space_before", None))
+            spacing_after = self._coerce_length(getattr(format_props, "space_after", None))
+            indent_left = self._coerce_length(getattr(format_props, "left_indent", None))
+            indent_first_line = self._coerce_length(getattr(format_props, "first_line_indent", None))
+
         return ParagraphBlock(
             text=text,
             style_name=style_name,
@@ -150,6 +197,16 @@ class DOCXLoader(DocumentLoader):
             is_list=is_list,
             list_level=list_level,
             list_ordered=list_ordered,
+            font_name=font_name,
+            font_size=font_size,
+            bold=bold,
+            italic=italic,
+            underline=underline,
+            alignment=alignment,
+            spacing_before=spacing_before,
+            spacing_after=spacing_after,
+            indent_left=indent_left,
+            indent_first_line=indent_first_line,
         )
 
     def _extract_table_block(self, table) -> TableBlock:
@@ -167,6 +224,55 @@ class DOCXLoader(DocumentLoader):
             rows.append(cells)
 
         return TableBlock(rows=rows)
+
+    def _normalize_alignment(self, alignment_value) -> Optional[str]:
+        """Map python-docx paragraph alignments to generic label values."""
+        if alignment_value is None:
+            return None
+        mapping = {
+            WD_PARAGRAPH_ALIGNMENT.LEFT: "left",
+            WD_PARAGRAPH_ALIGNMENT.CENTER: "center",
+            WD_PARAGRAPH_ALIGNMENT.RIGHT: "right",
+            WD_PARAGRAPH_ALIGNMENT.JUSTIFY: "justify",
+            WD_PARAGRAPH_ALIGNMENT.DISTRIBUTE: "distributed",
+        }
+        return mapping.get(alignment_value, None)
+
+    def _coerce_length(self, value) -> Optional[float]:
+        """Convert a python-docx length to a point value if measurable."""
+        if value is None:
+            return None
+        try:
+            if hasattr(value, "pt"):
+                return float(value.pt)
+            if isinstance(value, (int, float)):
+                return float(value)
+        except Exception:
+            pass
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _coerce_font_size(self, value) -> Optional[float]:
+        """Convert a docx font-size object to a float point value."""
+        if value is None:
+            return None
+        try:
+            return float(value.pt)
+        except Exception:
+            return self._coerce_length(value)
+
+    def _coerce_underline(self, value) -> Optional[bool]:
+        """Normalize underlining state into a simple boolean or None."""
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        try:
+            return bool(value)
+        except Exception:
+            return None
 
     def _is_list_paragraph(self, paragraph) -> bool:
         """Determine if a paragraph is part of a list.

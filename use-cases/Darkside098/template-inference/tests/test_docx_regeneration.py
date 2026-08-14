@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from docx import Document as DocxDocument
+from docx.shared import Pt
 
 from superdocs_template_inference.ingestion import DOCXLoader
 from superdocs_template_inference.models import Document, ParagraphBlock
@@ -12,7 +13,7 @@ from superdocs_template_inference.template_inference.result import (
     TemplateSection,
     VariableField,
 )
-from superdocs_template_inference.template_inference.regeneration import DocxRegenerator
+from superdocs_template_inference.template_inference import DocxFidelityComparator, DocxRegenerator
 
 
 def _build_template() -> TemplateInferenceResult:
@@ -205,3 +206,95 @@ def test_integration_regeneration_uses_real_benchmark_docx(tmp_path):
     for title in expected_titles:
         title_text = title.replace("_", " ")
         assert any(title_text in paragraph.lower() for paragraph in (p.lower() for p in paragraphs))
+
+
+def test_loader_preserves_detectable_formatting_from_docx(tmp_path):
+    doc = DocxDocument()
+    paragraph = doc.add_paragraph("Welcome to Contoso Labs.")
+    paragraph.style = "Heading 1"
+    paragraph.alignment = 1
+    paragraph.paragraph_format.space_before = 20
+    paragraph.paragraph_format.space_after = 10
+    run = paragraph.runs[0]
+    run.bold = True
+    run.italic = True
+    run.font.name = "Calibri"
+    run.font.size = Pt(18)
+    run.font.underline = True
+
+    path = tmp_path / "formatting_sample.docx"
+    doc.save(path)
+    loaded = DOCXLoader().load(str(path))
+    assert loaded.blocks
+    block = loaded.blocks[0]
+    assert isinstance(block, ParagraphBlock)
+    assert block.style_name == "Heading 1"
+    assert block.is_heading is True
+    assert block.heading_level == 1
+    assert block.bold is True
+    assert block.italic is True
+    assert block.underline is True
+    assert block.font_name == "Calibri"
+    assert block.font_size == 18.0
+    assert block.alignment == "center"
+
+
+def test_regeneration_preserves_source_formatting_when_available(tmp_path):
+    source_document = Document(
+        document_id="doc-format",
+        filename="formatting.docx",
+        file_type="docx",
+        loaded_at="2026-01-01T00:00:00Z",
+        blocks=[
+            ParagraphBlock(text="company_header", is_heading=True, heading_level=1, style_name="Heading 1", font_size=18.0, bold=True, alignment="center"),
+            ParagraphBlock(text="Welcome to Contoso Labs.", style_name="Normal", bold=True, font_size=12.0, alignment="left"),
+        ],
+    )
+    template = _build_template()
+    template.sections[0].content_representation = "Welcome to {{company_name}}."
+    template.sections[2].content_representation = "Sincerely, {{manager_name}}."
+
+    output_path = tmp_path / "formatting_preserved.docx"
+    result = DocxRegenerator().regenerate(
+        template,
+        {"company_name": "Contoso Labs", "employment_type": "Remote", "manager_name": "Alice Johnson"},
+        source_document=source_document,
+        output_path=str(output_path),
+    )
+
+    assert result.succeeded is True
+    regenerated = DocxDocument(str(output_path))
+    assert regenerated.paragraphs[0].text == "Welcome to Contoso Labs."
+    assert regenerated.paragraphs[0].style.name == "Heading 1" or regenerated.paragraphs[0].style.name == "Normal"
+    assert regenerated.paragraphs[0].runs[0].bold is True or any(run.bold for run in regenerated.paragraphs[0].runs)
+
+
+def test_fidelity_comparison_reports_source_vs_regenerated_difference():
+    source = Document(
+        document_id="source-doc",
+        filename="source.docx",
+        file_type="docx",
+        loaded_at="2026-01-01T00:00:00Z",
+        blocks=[
+            ParagraphBlock(text="Welcome to Contoso Labs.", style_name="Normal", bold=True),
+            ParagraphBlock(text="Sincerely, Alice Johnson.", style_name="Normal"),
+        ],
+    )
+    regenerated = Document(
+        document_id="regenerated-doc",
+        filename="regenerated.docx",
+        file_type="docx",
+        loaded_at="2026-01-01T00:00:00Z",
+        blocks=[
+            ParagraphBlock(text="Welcome to Contoso Labs.", style_name="Normal", bold=False),
+            ParagraphBlock(text="Sincerely, Bob Smith.", style_name="Normal"),
+        ],
+    )
+
+    comparison = DocxFidelityComparator().compare(source, regenerated)
+
+    assert 0.0 <= comparison.overall_score <= 1.0
+    assert comparison.text_similarity < 1.0
+    assert comparison.formatting_similarity < 1.0
+    assert comparison.discrepancies
+    assert comparison.supported_metrics["text"] >= 0.0

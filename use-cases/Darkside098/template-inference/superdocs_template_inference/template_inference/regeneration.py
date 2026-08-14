@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from docx import Document
+from docx.shared import Pt
 
 from superdocs_template_inference.models import Document as NormalizedDocument, ParagraphBlock, TableBlock
 from superdocs_template_inference.template_inference.result import (
@@ -28,6 +29,129 @@ class RegenerationResult:
     omitted_conditional_sections: list[str] = field(default_factory=list)
     substituted_variables: dict[str, str] = field(default_factory=dict)
     succeeded: bool = False
+
+
+@dataclass
+class FidelityComparisonResult:
+    """Source-vs-regenerated DOCX fidelity comparison output."""
+
+    overall_score: float
+    text_similarity: float
+    formatting_similarity: float
+    structure_similarity: float
+    discrepancies: list[str] = field(default_factory=list)
+    supported_metrics: dict[str, float] = field(default_factory=dict)
+    unsupported_fields: list[str] = field(default_factory=list)
+
+
+class DocxFidelityComparator:
+    """Compare a source document against its regenerated output with honest, conservative scoring."""
+
+    def compare(self, source_document: NormalizedDocument, regenerated_document: NormalizedDocument) -> FidelityComparisonResult:
+        """Score textual and formatting fidelity between the source and regenerated normalized documents."""
+        source_blocks = [block for block in source_document.blocks if isinstance(block, ParagraphBlock)]
+        regenerated_blocks = [block for block in regenerated_document.blocks if isinstance(block, ParagraphBlock)]
+
+        text_similarity = self._text_similarity(source_blocks, regenerated_blocks)
+        formatting_similarity = self._formatting_similarity(source_blocks, regenerated_blocks)
+        structure_similarity = self._structure_similarity(source_document, regenerated_document)
+
+        supported_metrics = {
+            "text": text_similarity,
+            "formatting": formatting_similarity,
+            "structure": structure_similarity,
+        }
+        overall_score = 0.5 * text_similarity + 0.35 * formatting_similarity + 0.15 * structure_similarity
+
+        discrepancies: list[str] = []
+        if text_similarity < 1.0:
+            discrepancies.append("Text content differs between source and regenerated output.")
+        if formatting_similarity < 1.0:
+            discrepancies.append("Detected formatting differences exist between source and regenerated output.")
+        if structure_similarity < 1.0:
+            discrepancies.append("Document structure differs between source and regenerated output.")
+
+        unsupported_fields = [
+            "run_level_font_variation",
+            "embedded_object_geometry",
+            "pixel-perfect_spacing",
+        ]
+
+        return FidelityComparisonResult(
+            overall_score=max(0.0, min(1.0, overall_score)),
+            text_similarity=max(0.0, min(1.0, text_similarity)),
+            formatting_similarity=max(0.0, min(1.0, formatting_similarity)),
+            structure_similarity=max(0.0, min(1.0, structure_similarity)),
+            discrepancies=discrepancies,
+            supported_metrics=supported_metrics,
+            unsupported_fields=unsupported_fields,
+        )
+
+    def _text_similarity(self, source_blocks: list[ParagraphBlock], regenerated_blocks: list[ParagraphBlock]) -> float:
+        """Measure token overlap between source and regenerated text content."""
+        source_tokens = self._tokenize(" ".join(block.text for block in source_blocks if block.text))
+        regenerated_tokens = self._tokenize(" ".join(block.text for block in regenerated_blocks if block.text))
+        if not source_tokens and not regenerated_tokens:
+            return 1.0
+        if not source_tokens or not regenerated_tokens:
+            return 0.0
+        union = set(source_tokens) | set(regenerated_tokens)
+        intersection = set(source_tokens) & set(regenerated_tokens)
+        if not union:
+            return 1.0
+        return len(intersection) / len(union)
+
+    def _formatting_similarity(self, source_blocks: list[ParagraphBlock], regenerated_blocks: list[ParagraphBlock]) -> float:
+        """Compare conservative formatting signals that are actually preserved in the normalized model."""
+        if not source_blocks and not regenerated_blocks:
+            return 1.0
+        if not source_blocks or not regenerated_blocks:
+            return 0.0
+
+        total = 0.0
+        comparisons = 0
+        for source_block, regenerated_block in zip(source_blocks, regenerated_blocks):
+            comparisons += 1
+            score = 0.0
+            checks = 0
+            for field_name in ("is_heading", "bold", "italic", "underline", "alignment"):
+                source_value = getattr(source_block, field_name, None)
+                regenerated_value = getattr(regenerated_block, field_name, None)
+                if source_value is None and regenerated_value is None:
+                    continue
+                checks += 1
+                if source_value == regenerated_value:
+                    score += 1.0
+            if source_block.style_name is not None or regenerated_block.style_name is not None:
+                checks += 1
+                if source_block.style_name == regenerated_block.style_name:
+                    score += 1.0
+            if source_block.font_size is not None or regenerated_block.font_size is not None:
+                checks += 1
+                if source_block.font_size is not None and regenerated_block.font_size is not None:
+                    score += 1.0 if abs(source_block.font_size - regenerated_block.font_size) < 1.0 else 0.0
+                elif source_block.font_size is None or regenerated_block.font_size is None:
+                    score += 0.5
+            if checks:
+                total += score / checks
+        if comparisons == 0:
+            return 1.0
+        return total / comparisons
+
+    def _structure_similarity(self, source_document: NormalizedDocument, regenerated_document: NormalizedDocument) -> float:
+        """Compare paragraph counts and block type patterns conservatively."""
+        source_paragraphs = len([block for block in source_document.blocks if isinstance(block, ParagraphBlock)])
+        regenerated_paragraphs = len([block for block in regenerated_document.blocks if isinstance(block, ParagraphBlock)])
+        source_tables = len([block for block in source_document.blocks if isinstance(block, TableBlock)])
+        regenerated_tables = len([block for block in regenerated_document.blocks if isinstance(block, TableBlock)])
+
+        paragraph_ratio = 1.0 if source_paragraphs == 0 and regenerated_paragraphs == 0 else min(source_paragraphs, regenerated_paragraphs) / max(source_paragraphs, regenerated_paragraphs) if max(source_paragraphs, regenerated_paragraphs) else 1.0
+        table_ratio = 1.0 if source_tables == 0 and regenerated_tables == 0 else min(source_tables, regenerated_tables) / max(source_tables, regenerated_tables) if max(source_tables, regenerated_tables) else 1.0
+        return 0.5 * paragraph_ratio + 0.5 * table_ratio
+
+    def _tokenize(self, text: str) -> list[str]:
+        """Normalize token text for comparison."""
+        return [token.lower() for token in re.findall(r"[A-Za-z0-9]+", text or "") if token.strip()]
 
 
 class DocxRegenerator:
@@ -87,7 +211,7 @@ class DocxRegenerator:
                 continue
 
             if rendered:
-                self._add_rendered_content(doc, rendered)
+                self._add_rendered_content(doc, rendered, source_document=source_document)
                 included_sections.append(section.title_or_pattern)
 
         if result.warnings and not included_sections:
@@ -263,12 +387,88 @@ class DocxRegenerator:
         normalized = normalized.strip("_")
         return normalized
 
-    def _add_rendered_content(self, doc: Document, rendered: str) -> None:
-        """Add paragraph text to a docx document while preserving simple text blocks."""
+    def _add_rendered_content(self, doc: Document, rendered: str, *, source_document: NormalizedDocument | None = None) -> None:
+        """Add paragraph text to a docx document while preserving simple formatting where available."""
         for line in str(rendered).splitlines():
             clean_line = line.strip()
             if clean_line:
-                doc.add_paragraph(clean_line)
+                paragraph = doc.add_paragraph(clean_line)
+                self._apply_source_formatting(paragraph, clean_line, source_document=source_document)
+
+    def _apply_source_formatting(self, paragraph, text: str, *, source_document: NormalizedDocument | None) -> None:
+        """Style a regenerated paragraph to resemble the closest matching source paragraph when possible."""
+        if source_document is None:
+            return
+
+        best_match = None
+        best_score = -1.0
+        for block in source_document.blocks:
+            if not isinstance(block, ParagraphBlock):
+                continue
+            if not block.text:
+                continue
+            similarity = self._compare_text_similarity(block.text, text)
+            if similarity > best_score:
+                best_match = block
+                best_score = similarity
+
+        if best_match is None:
+            return
+
+        if best_match.style_name:
+            try:
+                paragraph.style = best_match.style_name
+            except Exception:
+                pass
+
+        if best_match.alignment is not None:
+            try:
+                alignment_value = {
+                    "left": 0,
+                    "center": 1,
+                    "right": 2,
+                    "justify": 3,
+                    "distributed": 4,
+                }.get(best_match.alignment, 0)
+                paragraph.alignment = alignment_value
+            except Exception:
+                pass
+
+        if best_match.spacing_before is not None:
+            try:
+                paragraph.paragraph_format.space_before = Pt(best_match.spacing_before)
+            except Exception:
+                pass
+        if best_match.spacing_after is not None:
+            try:
+                paragraph.paragraph_format.space_after = Pt(best_match.spacing_after)
+            except Exception:
+                pass
+
+        if paragraph.runs:
+            run = paragraph.runs[0]
+            if best_match.bold is not None:
+                run.bold = bool(best_match.bold)
+            if best_match.italic is not None:
+                run.italic = bool(best_match.italic)
+            if best_match.underline is not None:
+                run.font.underline = bool(best_match.underline)
+            if best_match.font_name:
+                run.font.name = best_match.font_name
+            if best_match.font_size is not None:
+                run.font.size = Pt(best_match.font_size)
+
+    def _compare_text_similarity(self, source_text: str, rendered_text: str) -> float:
+        """Simple token similarity used to match source paragraphs to regenerated output."""
+        source_tokens = set(re.findall(r"[A-Za-z0-9]+", (source_text or "").lower()))
+        rendered_tokens = set(re.findall(r"[A-Za-z0-9]+", (rendered_text or "").lower()))
+        if not source_tokens and not rendered_tokens:
+            return 1.0
+        if not source_tokens or not rendered_tokens:
+            return 0.0
+        union = source_tokens | rendered_tokens
+        overlap = source_tokens & rendered_tokens
+        return len(overlap) / len(union) if union else 0.0
 
 
-__all__ = ["DocxRegenerator", "RegenerationResult"]
+__all__ = ["DocxRegenerator", "RegenerationResult", "DocxFidelityComparator", "FidelityComparisonResult"]

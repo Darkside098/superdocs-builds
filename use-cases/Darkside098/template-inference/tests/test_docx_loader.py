@@ -59,6 +59,28 @@ class TestDOCXLoader:
 
         assert block is None  # Empty paragraphs are ignored
 
+    def test_extract_paragraph_block_without_iterable_runs(self):
+        """Test that paragraphs lacking iterable runs still extract cleanly."""
+        loader = DOCXLoader()
+        paragraph = Mock()
+        paragraph.text = "Sample paragraph text"
+        paragraph.style = Mock()
+        paragraph.style.name = "Normal"
+        paragraph.runs = Mock()
+        paragraph.runs.__iter__ = Mock(side_effect=TypeError("Mock object is not iterable"))
+        paragraph._element = Mock()
+        pPr_mock = Mock()
+        pPr_mock.find = Mock(return_value=None)
+        paragraph._element.get_or_add_pPr = Mock(return_value=pPr_mock)
+
+        block = loader._extract_paragraph_block(paragraph)
+
+        assert block is not None
+        assert block.text == "Sample paragraph text"
+        assert block.style_name == "Normal"
+        assert block.is_heading is False
+        assert block.is_list is False
+
     def test_extract_heading_paragraph(self):
         """Test extracting a heading paragraph."""
         loader = DOCXLoader()

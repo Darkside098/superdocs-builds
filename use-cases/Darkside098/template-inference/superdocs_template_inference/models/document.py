@@ -1,7 +1,7 @@
 """Normalized document representation."""
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 
 @dataclass
@@ -23,6 +23,16 @@ class ParagraphBlock(Block):
     is_list: bool = False
     list_level: Optional[int] = None  # Nesting level if list, None otherwise
     list_ordered: Optional[bool] = None  # True if ordered, False if unordered, None if not list
+    font_name: Optional[str] = None
+    font_size: Optional[float] = None
+    bold: Optional[bool] = None
+    italic: Optional[bool] = None
+    underline: Optional[bool] = None
+    alignment: Optional[str] = None
+    spacing_before: Optional[float] = None
+    spacing_after: Optional[float] = None
+    indent_left: Optional[float] = None
+    indent_first_line: Optional[float] = None
 
 
 @dataclass
@@ -58,6 +68,7 @@ class Document:
     file_type: str  # "docx" or "pdf"
     loaded_at: str  # ISO 8601 timestamp
     blocks: list[Block] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Validate document after initialization."""
