@@ -28,6 +28,16 @@ SuperDocs Template Inference
 - [x] Verified SuperDocs API connectivity
 - [x] Created `tests/`
 
+### SuperDocs API Validation
+
+```text
+python test_superdocs_api.py
+
+HTTP status: 200
+SuperDocs API connection successful!
+
+SuperDocs API connectivity verified using the configured SUPERDOCS_API_KEY; authenticated API request returned HTTP 200. The API key is stored in .env, which is excluded from Git tracking.
+
 ### Benchmark Corpus
 
 - [x] Prepared Offer Letter corpus
@@ -197,8 +207,7 @@ Milestones 1–3, downstream family clustering, template inference, DOCX regener
 > Formatting fidelity is limited to information available through the normalized document representation and supported python-docx metadata. Unsupported deep Word formatting is reported as unsupported/unknown rather than fabricated.
 >
 > PDF loader is not currently implemented in this branch.
->
-> No template-inference API endpoint is currently implemented in this branch.
+
 
 ---
 
@@ -252,3 +261,14 @@ Milestones 1–3, downstream family clustering, template inference, DOCX regener
 - [x] Unsupported deep Word formatting is reported as unsupported/unknown instead of fabricated.
 - [x] PDF loader is not currently implemented.
 - [x] No template-inference API endpoint is currently implemented in this branch.
+
+## Final Validation — 2026-08-15
+
+Status: COMPLETE
+
+### Automated Validation
+
+```text
+python -m pytest -q
+
+304 passed in 66.86s
